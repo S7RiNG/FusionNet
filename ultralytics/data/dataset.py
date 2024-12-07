@@ -279,8 +279,10 @@ class YOLOMultiModalDataset(YOLODataset):
 
 from lidar import read_combo
 import math
+from copy import deepcopy 
 class FusionDataset(YOLODataset):
     def __init__(self, *args, data=None, task="fusion", **kwargs):
+        self.dfs = [None] * self.ni
         super().__init__(*args, data=data, task=task, **kwargs)
 
     def load_image(self, i, rect_mode=True):
@@ -290,7 +292,8 @@ class FusionDataset(YOLODataset):
             if fn.exists():  # load npy
                 try:
                     im = np.load(fn)
-                    df = np.load((fn + 'f'))
+                    fn_df = str(Path(fn).parent) + str(Path(fn).stem) + 'f' + str(Path(fn).suffix)
+                    df = np.load(fn_df)
                 except Exception as e:
                     LOGGER.warning(f"{self.prefix}WARNING ⚠️ Removing corrupt *.npy image file {fn} due to: {e}")
                     Path(fn).unlink(missing_ok=True)
@@ -325,15 +328,44 @@ class FusionDataset(YOLODataset):
 
             return im, (h0, w0), im.shape[:2], df
 
-        return self.ims[i], self.im_hw0[i], self.im_hw[i]
+        return self.ims[i], self.im_hw0[i], self.im_hw[i], self.dfs[i]
     
+    def cache_images(self):
+        """Cache images to memory or disk."""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        fcn, storage = (self.cache_images_to_disk, "Disk") if self.cache == "disk" else (self.load_image, "RAM")
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(fcn, range(self.ni))
+            pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
+            for i, x in pbar:
+                if self.cache == "disk":
+                    b += self.npy_files[i].stat().st_size
+                else:  # 'ram'
+                    self.ims[i], self.im_hw0[i], self.im_hw[i], self.dfs[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
+                    b += self.ims[i].nbytes
+                pbar.desc = f"{self.prefix}Caching images ({b / gb:.1f}GB {storage})"
+            pbar.close()
+
     def cache_images_to_disk(self, i):
         """Saves an image as an *.npy file for faster loading."""
         fn = self.npy_files[i]
         if not fn.exists():
             im, df = read_combo(self.im_files[i])
             np.save(fn.as_posix(), im, allow_pickle=False)
-            np.save((fn+'f').as_posix(), df, allow_pickle=False) #.npyf
+            np.save((fn+'f').as_posix(), df, allow_pickle=False) #f.npy
+
+    def get_image_and_label(self, index):
+        """Get and return label information from the dataset."""
+        label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
+        label.pop("shape", None)  # shape is for rect, remove it
+        label["img"], label["ori_shape"], label["resized_shape"], label['df'] = self.load_image(index)
+        label["ratio_pad"] = (
+            label["resized_shape"][0] / label["ori_shape"][0],
+            label["resized_shape"][1] / label["ori_shape"][1],
+        )  # for evaluation
+        if self.rect:
+            label["rect_shape"] = self.batch_shapes[self.batch[index]]
+        return self.update_labels_info(label)
 
 
 
