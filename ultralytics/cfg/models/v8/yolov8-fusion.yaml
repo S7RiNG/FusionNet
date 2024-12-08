@@ -48,4 +48,4 @@ head:
   - [9, 1, Conv, [1024, 1, 1]]
   - [[10, 11, 12], 1, Concat, [1]]
   - [-1, 1, FusionNet, [4, 8]]
-  - [[15, 18, 21], 1, Funet, [nc]]  # Detect(P3, P4, P5)
+  - [[-1], 1, Detect, [nc]]  # Detect(P3, P4, P5)

@@ -23,8 +23,12 @@ class FusionNetTrainer(DetectionTrainer):
         return build_fusion_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs)
 
     def preprocess_batch(self, batch):
+        """Add data of fusion : 'dfs' """
         batch['dfs'] = batch['dfs'].to(self.device, non_blocking=True).float()
         return super().preprocess_batch(batch)
+    
+    def get_model(self, cfg=None, weights=None, verbose=True):
+        return super().get_model(cfg, weights, verbose)
     
     def get_validator(self):
         """Returns a DetectionValidator for YOLO model validation."""

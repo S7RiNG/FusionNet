@@ -86,6 +86,11 @@ from .transformer import (
     TransformerLayer,
 )
 
+from fusion import (
+    FuisonBlock,
+    FusionNet
+)
+
 __all__ = (
     "Conv",
     "Conv2",
