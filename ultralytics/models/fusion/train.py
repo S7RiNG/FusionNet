@@ -1,16 +1,17 @@
 from ultralytics.models.yolo.detect import DetectionTrainer
-from ultralytics.models.fusion import FusionNetValidator
 from ultralytics.utils.torch_utils import de_parallel
 from ultralytics.data.build import build_fusion_dataset
+
+from .val import FusionNetValidator
+from .model import FusionNetModel
 
 from copy import copy
 
 class FusionNetTrainer(DetectionTrainer):
-    def __init__(self, cfg=..., overrides=None, _callbacks=None):
-        overrides['task'] = 'fusion'
-        super().__init__(cfg, overrides, _callbacks)
+    # def __init__(self, overrides=None):
+    #     super().__init__(overrides)
 
-    def build_dataset(self, img_path, mode="train", batch=None):
+    def build_dataset(self, img_path, map_path, point_path, mode="train", batch=None):
         """
         Build FusionNet Dataset.
 
@@ -28,7 +29,11 @@ class FusionNetTrainer(DetectionTrainer):
         return super().preprocess_batch(batch)
     
     def get_model(self, cfg=None, weights=None, verbose=True):
-        return super().get_model(cfg, weights, verbose)
+        """Return a YOLO detection model."""
+        model = FusionNetModel(cfg, nc=self.data["nc"], verbose=verbose)
+        if weights:
+            model.load(weights)
+        return model
     
     def get_validator(self):
         """Returns a DetectionValidator for YOLO model validation."""

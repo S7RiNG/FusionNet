@@ -61,7 +61,9 @@ from ultralytics.nn.modules import (
     Segment,
     WorldDetect,
     v10Detect,
-    FusionNet
+    FusionConcat,
+    FusionSequence,
+    FusionSplitResult,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -332,6 +334,8 @@ class DetectionModel(BaseModel):
                 """Performs a forward pass through the model, handling different Detect subclass types accordingly."""
                 if self.end2end:
                     return self.forward(x)["one2many"]
+                if isinstance(self, FusionNetModel):
+                    x = (x, torch.zeros(1, self.model[17].d_model, s))
                 return self.forward(x)[0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)
 
             m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])  # forward
@@ -388,9 +392,44 @@ class DetectionModel(BaseModel):
     def init_criterion(self):
         """Initialize the loss criterion for the DetectionModel."""
         return E2EDetectLoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
+
+
 class FusionNetModel(DetectionModel):
     def __init__(self, cfg="yolov8n-fusion.yaml", ch=6, nc=None, verbose=True):
         super().__init__(cfg, ch, nc, verbose)
+
+    def predict(self, x, profile=False, visualize=False, batch=None, augment=False, embed=None):
+        """
+        Perform a forward pass through the network.
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool):  Print the computation time of each layer if True, defaults to False.
+            visualize (bool): Save the feature maps of the model if True, defaults to False.
+            embed (list, optional): A list of feature vectors/embeddings to return.
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        x, df = x
+        y, dt, embeddings = [], [], []  # outputs
+        for m in self.model:
+            if m.f != -1:  # if not from previous layer
+                if isinstance(m.f, int):
+                    x = y[m.f]
+                else:
+                    x = [x if j == -1 else (y[j] if isinstance(j, int) else df) for j in m.f]  # from earlier layers
+            if profile:
+                self._profile_one_layer(m, x, dt)
+            x = m(x)  # run
+            y.append(x if m.i in self.save else None)  # save output
+            if visualize:
+                feature_visualization(x, m.type, m.i, save_dir=visualize)
+            if embed and m.i in embed:
+                embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
+                if m.i == max(embed):
+                    return torch.unbind(torch.cat(embeddings, 1), dim=0)
+        return x
 
 class OBBModel(DetectionModel):
     """YOLOv8 Oriented Bounding Box (OBB) model."""
@@ -1061,8 +1100,19 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
-        elif m is FusionNet:
-            args.insert(ch[f[0]])
+        elif m is FusionSequence:
+            #"from" is int or str
+            if isinstance(f[0], int):
+                c2 = ch[f[0]]
+            elif isinstance(f[1], int):
+                c2 = ch[f[1]]
+            else:
+                c2 = d["fusiondim"][f[0]]
+            args.insert(0, c2)
+        elif m is FusionConcat:
+            c2 = ch[f[0]]
+        elif m is FusionSplitResult:
+            c2 = ch[f]
         else:
             c2 = ch[f]
 
@@ -1072,12 +1122,12 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         m_.i, m_.f, m_.type = i, f, t  # attach index, 'from' index, type
         if verbose:
             LOGGER.info(f"{i:>3}{str(f):>20}{n_:>3}{m_.np:10.0f}  {t:<45}{str(args):<30}")  # print
-        save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
+        save.extend((x % i if isinstance(x, int) else x) for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
         layers.append(m_)
         if i == 0:
             ch = []
         ch.append(c2)
-    return nn.Sequential(*layers), sorted(save)
+    return nn.Sequential(*layers), save #sorted(save)
 
 
 def yaml_model_load(path):

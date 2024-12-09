@@ -86,9 +86,11 @@ from .transformer import (
     TransformerLayer,
 )
 
-from fusion import (
+from .fusion import (
     FuisonBlock,
-    FusionNet
+    FusionConcat,
+    FusionSequence,
+    FusionSplitResult,
 )
 
 __all__ = (

@@ -277,29 +277,103 @@ class YOLOMultiModalDataset(YOLODataset):
             transforms.insert(-1, RandomLoadText(max_samples=min(self.data["nc"], 80), padding=True))
         return transforms
 
-from lidar import read_combo
+from .lidar import read_combo
 import math
 from copy import deepcopy 
+from ultralytics.utils import DEFAULT_CFG
+from torch.utils.data import Dataset
 class FusionDataset(YOLODataset):
-    def __init__(self, *args, data=None, task="fusion", **kwargs):
+    def __init__(
+        self,
+        img_path,
+        imgsz=640,
+        cache=False,
+        augment=True,
+        hyp=DEFAULT_CFG,
+        prefix="",
+        rect=False,
+        batch_size=16,
+        stride=32,
+        pad=0.5,
+        single_cls=False,
+        classes=None,
+        fraction=1.0,
+        data = None
+    ):
+        """Initialize BaseDataset with given configuration and options."""
+        super(Dataset, self).__init__()
+        self.use_segments = False
+        self.use_keypoints = False
+        self.use_obb = False
+        self.data = data
+
+        self.img_path = img_path
+        self.imgsz = imgsz
+        self.augment = augment
+        self.single_cls = single_cls
+        self.prefix = prefix
+        self.fraction = fraction
+        self.im_files = self.get_img_files(self.img_path)
+        self.labels = self.get_labels()
+        self.update_labels(include_class=classes)  # single_cls and include_class
+        self.ni = len(self.labels)  # number of images
+        self.rect = rect
+        self.batch_size = batch_size
+        self.stride = stride
+        self.pad = pad
+        if self.rect:
+            assert self.batch_size is not None
+            self.set_rectangle()
+
+        # Buffer thread for mosaic images
+        self.buffer = []  # buffer size = batch size
+        self.max_buffer_length = min((self.ni, self.batch_size * 8, 1000)) if self.augment else 0
+
+        # Cache images (options are cache = True, False, None, "ram", "disk")
+        self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
         self.dfs = [None] * self.ni
-        super().__init__(*args, data=data, task=task, **kwargs)
+        self.npy_files = [Path(f).with_suffix(".npz") for f in self.im_files]
+        self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
+        if self.cache == "ram" and self.check_cache_ram():
+            if hyp.deterministic:
+                LOGGER.warning(
+                    "WARNING ⚠️ cache='ram' may produce non-deterministic training results. "
+                    "Consider cache='disk' as a deterministic alternative if your disk space allows."
+                )
+            self.cache_images()
+        elif self.cache == "disk" and self.check_cache_disk():
+            self.cache_images()
+
+        # Transforms
+        self.transforms = self.build_transforms(hyp=hyp)
+
+    def get_image_and_label(self, index):
+        """Get and return label information from the dataset."""
+        label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
+        label.pop("shape", None)  # shape is for rect, remove it
+        label["img"], label["ori_shape"], label["resized_shape"], label['df'] = self.load_image(index)
+        label["ratio_pad"] = (
+            label["resized_shape"][0] / label["ori_shape"][0],
+            label["resized_shape"][1] / label["ori_shape"][1],
+        )  # for evaluation
+        if self.rect:
+            label["rect_shape"] = self.batch_shapes[self.batch[index]]
+        return self.update_labels_info(label)
 
     def load_image(self, i, rect_mode=True):
         """Loads 1 image from dataset index 'i', returns (im, resized hw)."""
         im, df, f, fn = self.ims[i], self.dfs[i], self.im_files[i], self.npy_files[i]
         if im is None:  # not cached in RAM
-            if fn.exists():  # load npy
+            if fn.exists():  # load npz
                 try:
-                    im = np.load(fn)
-                    fn_df = str(Path(fn).parent) + str(Path(fn).stem) + 'f' + str(Path(fn).suffix)
-                    df = np.load(fn_df)
+                    nploaded =np.load(fn)
+                    im, df = nploaded['im'], nploaded['df']
                 except Exception as e:
                     LOGGER.warning(f"{self.prefix}WARNING ⚠️ Removing corrupt *.npy image file {fn} due to: {e}")
                     Path(fn).unlink(missing_ok=True)
-                    im, df = read_combo(fn) # BGRDIH + PT
+                    im, df = read_combo(f) # BGRDIH + PT
             else:  # read image
-                im, df = read_combo(fn) # BGRDIH + PT
+                im, df = read_combo(f) # BGRDIH + PT
             if im is None:
                 raise FileNotFoundError(f"Image Not Found {f}")
 
@@ -351,8 +425,7 @@ class FusionDataset(YOLODataset):
         fn = self.npy_files[i]
         if not fn.exists():
             im, df = read_combo(self.im_files[i])
-            np.save(fn.as_posix(), im, allow_pickle=False)
-            np.save((fn+'f').as_posix(), df, allow_pickle=False) #f.npy
+            np.savez(fn.as_posix(), im=im, df=df)
 
     def get_image_and_label(self, index):
         """Get and return label information from the dataset."""
@@ -366,7 +439,24 @@ class FusionDataset(YOLODataset):
         if self.rect:
             label["rect_shape"] = self.batch_shapes[self.batch[index]]
         return self.update_labels_info(label)
-
+    
+    def build_transforms(self, hyp=None):
+        """Builds and appends transforms to the list."""
+        transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+        transforms.append(
+            Format(
+                bbox_format="xywh",
+                normalize=True,
+                return_mask=self.use_segments,
+                return_keypoint=self.use_keypoints,
+                return_obb=self.use_obb,
+                batch_idx=True,
+                mask_ratio=hyp.mask_ratio,
+                mask_overlap=hyp.overlap_mask,
+                bgr=hyp.bgr if self.augment else 0.0,  # only affect training.
+            )
+        )
+        return transforms
 
 
 class GroundingDataset(YOLODataset):

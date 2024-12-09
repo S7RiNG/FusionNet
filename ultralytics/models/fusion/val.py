@@ -1,4 +1,4 @@
-from yolo.detect import DetectionValidator
+from ultralytics.models.yolo.detect import DetectionValidator
 
 class FusionNetValidator(DetectionValidator):
     def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):

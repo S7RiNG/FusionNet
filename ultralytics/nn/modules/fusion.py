@@ -1,7 +1,10 @@
 import torch.nn as nn
+import torch
+import math
 from positional_encodings.torch_encodings import PositionalEncoding1D
+from torch.nn.init import constant_, xavier_uniform_
 
-__all__ = ('FuisonBlock', 'FusionNet')
+__all__ = ('FuisonBlock', "FusionConcat", 'FusionSequence', 'FusionSplitResult')
 
 
 class FuisonBlock(nn.Module):
@@ -38,26 +41,57 @@ class FuisonBlock(nn.Module):
         #feed forward
         ff = self.ff2(self.ff1(out_fa)) + out_fa
         return self.ln_ff(ff)
+    
+class FusionConcat(nn.Module):
+    def __init__(self, dim):
+        self.dim = dim
+        super().__init__()
+    def forward(self, x):
+        x = [y for y in x]
+        return torch.cat(x, dim=self.dim)
 
-class FusionNet(nn.Module):
+class FusionSequence(nn.Module):
     def __init__(self, d_model, repeat=1, d_ff=2048, n_head=1):
         super().__init__()
-
-        self.faltten = nn.Flatten(1, -2)        
+        self.d_model = d_model
+        self.faltten = nn.Flatten(2, -1)     
         self.pe = PositionalEncoding1D(d_model)
-        self.fbl1, self.fbl2 = [], []
+        sq1, sq2 = [], []
 
         for _ in range(repeat):
-            self.fbl1.append(FuisonBlock(d_model, d_ff, n_head))
-            self.fbl2.append(FuisonBlock(d_model, d_ff, n_head))
+            sq1.append(FuisonBlock(d_model, d_ff, n_head))
+            sq2.append(FuisonBlock(d_model, d_ff, n_head))
+        self.fusionseq1 = nn.Sequential(*sq1)
+        self.fusionseq2 = nn.Sequential(*sq2)
+        self.blockout = FuisonBlock(d_model, d_ff, n_head)
         
-    def forward(self, data_1, data_2):# data: batch, ..., d_model
-        _data_1, _data_2 = self.faltten(data_1), self.faltten(data_2) #展平中间维度
-        _data_1, _data_2 = self.pe(_data_1) + _data_1, self.pe(_data_2) + _data_2 #位置编码
-        for fb1, fb2 in zip(self.fbl1, self.fbl2):
-            _data_1 = fb1(_data_1, _data_2)
-            _data_2 = fb2(_data_2, _data_1)
-        return _data_1, _data_2
+
+        
+    def forward(self, x):# data: batch, ..., d_model
+        data_1, data_2 = x
+        data_1, data_2 = self.faltten(data_1), self.faltten(data_2) #展平中间维度
+        data_1, data_2 = data_1.permute(0, 2, 1), data_1.permute(0, 2, 1)
+        data_1, data_2 = self.pe(data_1) + data_1, self.pe(data_2) + data_2 #位置编码
+        for fusionblock1, fusionblock2 in zip(self.fusionseq1, self.fusionseq2):
+            data_1 = fusionblock1(data_1, data_2)
+            data_2 = fusionblock2(data_2, data_1)
+        self.blockout(data_1, data_2)
+        
+        data_1, data_2 = data_1.permute(0, 2, 1), data_1.permute(0, 2, 1)
+        return data_1
     
+class FusionSplitResult(nn.Module):
+    def __init__(self, n_start, n_end):
+        super().__init__()
+
+        self.n_start = n_start
+        self.n_end = n_end
+        n = int(math.sqrt(n_end - n_start))
+        self.uf = nn.Unflatten(-1, torch.Size([n, n]))
+        
+    
+    def forward(self, x):
+        r = self.uf(x[:,:,self.n_start:self.n_end])
+        return r
 
     
