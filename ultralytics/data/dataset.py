@@ -282,6 +282,7 @@ import math
 from copy import deepcopy 
 from ultralytics.utils import DEFAULT_CFG
 from torch.utils.data import Dataset
+from ultralytics.data.lidar import LiDAR_norm, LetterBox_LiDAR
 class FusionDataset(YOLODataset):
     def __init__(
         self,
@@ -442,7 +443,7 @@ class FusionDataset(YOLODataset):
     
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
-        transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+        transforms = Compose([LiDAR_norm(), LetterBox_LiDAR(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
         transforms.append(
             Format(
                 bbox_format="xywh",
