@@ -1,6 +1,9 @@
+import torch
 from ultralytics.models.yolo.detect import DetectionTrainer
 from ultralytics.utils.torch_utils import de_parallel
 from ultralytics.data.build import build_fusion_dataset
+
+from ultralytics.utils.plotting import plot_images
 
 from .val import FusionNetValidator
 from .model import FusionNetModel
@@ -25,7 +28,7 @@ class FusionNetTrainer(DetectionTrainer):
 
     def preprocess_batch(self, batch):
         """Add data of fusion : 'dfs' """
-        batch['dfs'] = batch['dfs'].to(self.device, non_blocking=True).float()
+        batch['df'] = batch['df'].to(self.device, non_blocking=True).float()
         return super().preprocess_batch(batch)
     
     def get_model(self, cfg=None, weights=None, verbose=True):
@@ -42,5 +45,26 @@ class FusionNetTrainer(DetectionTrainer):
             self.test_loader, save_dir=self.save_dir, args=copy(self.args), _callbacks=self.callbacks
         )
     
+    def plot_training_samples(self, batch, ni):
+        """Plots training samples with their annotations."""
+        lids, imgs = torch.split(batch["img"], 3, 1)#RGB
+        plot_images(
+            images=imgs,
+            batch_idx=batch["batch_idx"],
+            cls=batch["cls"].squeeze(-1),
+            bboxes=batch["bboxes"],
+            paths=batch["im_file"],
+            fname=self.save_dir / f"train_batch_RGB{ni}.jpg",
+            on_plot=self.on_plot,
+        )
+        plot_images(
+            images=lids,
+            batch_idx=batch["batch_idx"],
+            cls=batch["cls"].squeeze(-1),
+            bboxes=batch["bboxes"],
+            paths=batch["im_file"],
+            fname=self.save_dir / f"train_batch_LiDAR{ni}.jpg",
+            on_plot=self.on_plot,
+        )
     
     

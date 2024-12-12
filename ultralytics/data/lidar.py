@@ -9,20 +9,21 @@ import cv2
 from .augment import LetterBox
 
 def read_lidarmap(path) -> Tensor:
-    return f.to_tensor(cv2.imread(path))
+    return cv2.imread(path)
 
 def read_lidarpoint(path) -> Tensor:
-    return torch.from_numpy(np.load(path))
+    return np.load(path)
 
 def read_combo(img_path) -> Tensor:
     path = Path(img_path)
     path_map = path.parent/'..'/'maps'/path.name
     path_point = Path.with_suffix((path.parent/'..'/'points'/path.name), '.npy') 
 
-    im = f.to_tensor(cv2.imread(path))
+    im = cv2.imread(path)
     map = read_lidarmap(path_map)
     point = read_lidarpoint(path_point)
-    return torch.cat([im, map]).permute(1,2,0).numpy(), point
+    cat = np.concatenate([im, map], 2)
+    return cat, point
 
 class LiDAR_norm:
     def __call__(self, labels=None, image=None, df=None):
@@ -33,13 +34,14 @@ class LiDAR_norm:
 
         df = df.astype(np.float32)
 
-        w, h = img.shape[:2]
+        h, w = img.shape[:2]
         df[:,0] = df[:,0]/w
         df[:,1] = df[:,1]/h
         df[:,2:4] = df[:,2:4]/255
 
         if len(labels):
             labels["df"] = df
+            return labels
         else:
             return df
 
@@ -118,9 +120,32 @@ class LetterBox_LiDAR(LetterBox):
         img = np.concatenate((rgb, lid), axis=2)
 
         #LiDAR point
-        lidar_scale = np.array(new_unpad, dtype=np.float32)/np.array(new_shape, dtype=np.float32)
-        lidar_offset = (1 - lidar_scale)/2
-        df[:, 0:2] = df[:, 0:2] * lidar_scale + lidar_offset
+        df = np.array(df)
+        lidar_scale = np.array([new_unpad[0]/new_shape[1], new_unpad[1]/new_shape[0]], dtype=np.float32) #w, h scale
+        lidar_offset = (1.0 - lidar_scale)/2
+        df[:, 0:2] = (df[:, 0:2] * lidar_scale)  + lidar_offset
+        len_df = df.shape[0]
+        len_zero = 30000 - len_df
+        if len_zero > 0:
+            zeros = np.zeros([len_zero, 4], dtype=df.dtype)
+            df = np.concatenate([df, zeros], 0)
+        else:
+            df = df[:30000]
+        df = df.transpose()
+        df = torch.from_numpy(df)
+        
+        if False:
+            img, lid = torch.split(torch.from_numpy(img), 3, 0)
+            from matplotlib import pyplot as PLT
+            pt_show = df
+            shape_show = int(new_shape[1])
+            pt_show[:, 0:2] = pt_show[:, 0:2] * shape_show
+            u,v,z,i = pt_show.T
+            PLT.figure(figsize=(12,5),dpi=96,tight_layout=True)
+            PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2)
+            PLT.axis([0,shape_show,shape_show,0])
+            PLT.imshow(img)
+            PLT.show()
 
 
         if labels.get("ratio_pad"):

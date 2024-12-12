@@ -384,22 +384,12 @@ class FusionDataset(YOLODataset):
                 if r != 1:  # if sizes are not equal
                     w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
                     im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
-                    df[0] = df[0] * (h / h0)
-                    df[1] = df[1] * (w / w0)
+                    df[0] = df[0] * (w / w0)
+                    df[1] = df[1] * (h / h0)
             elif not (h0 == w0 == self.imgsz):  # resize by stretching image to square imgsz
                 im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
-                df[0] = df[0] * (h / self.imgsz)
-                df[1] = df[1] * (w / self.imgsz)
- 
-            # Add to buffer if training with augmentations
-            if self.augment:
-                raise AssertionError
-                self.ims[i], self.im_hw0[i], self.im_hw[i] = im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
-                self.buffer.append(i)
-                if 1 < len(self.buffer) >= self.max_buffer_length:  # prevent empty buffer
-                    j = self.buffer.pop(0)
-                    if self.cache != "ram":
-                        self.ims[j], self.im_hw0[j], self.im_hw[j] = None, None, None
+                df[0] = df[0] * (w / self.imgsz)
+                df[1] = df[1] * (h / self.imgsz)
 
             return im, (h0, w0), im.shape[:2], df
 
@@ -427,19 +417,6 @@ class FusionDataset(YOLODataset):
         if not fn.exists():
             im, df = read_combo(self.im_files[i])
             np.savez(fn.as_posix(), im=im, df=df)
-
-    def get_image_and_label(self, index):
-        """Get and return label information from the dataset."""
-        label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
-        label.pop("shape", None)  # shape is for rect, remove it
-        label["img"], label["ori_shape"], label["resized_shape"], label['df'] = self.load_image(index)
-        label["ratio_pad"] = (
-            label["resized_shape"][0] / label["ori_shape"][0],
-            label["resized_shape"][1] / label["ori_shape"][1],
-        )  # for evaluation
-        if self.rect:
-            label["rect_shape"] = self.batch_shapes[self.batch[index]]
-        return self.update_labels_info(label)
     
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
@@ -458,6 +435,25 @@ class FusionDataset(YOLODataset):
             )
         )
         return transforms
+    
+    @staticmethod
+    def collate_fn(batch):
+        """Collates data samples into batches."""
+        new_batch = {}
+        keys = batch[0].keys()
+        values = list(zip(*[list(b.values()) for b in batch]))
+        for i, k in enumerate(keys):
+            value = values[i]
+            if k in {"img", "df"}:
+                value = torch.stack(value, 0)
+            if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb"}:
+                value = torch.cat(value, 0)
+            new_batch[k] = value
+        new_batch["batch_idx"] = list(new_batch["batch_idx"])
+        for i in range(len(new_batch["batch_idx"])):
+            new_batch["batch_idx"][i] += i  # add target image index for build_targets()
+        new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
+        return new_batch
 
 
 class GroundingDataset(YOLODataset):

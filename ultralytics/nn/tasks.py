@@ -61,9 +61,10 @@ from ultralytics.nn.modules import (
     Segment,
     WorldDetect,
     v10Detect,
-    FusionConcat,
+    FusionConcatInput,
     FusionSequence,
     FusionSplitResult,
+    FusionLinear,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -335,7 +336,7 @@ class DetectionModel(BaseModel):
                 if self.end2end:
                     return self.forward(x)["one2many"]
                 if isinstance(self, FusionNetModel):
-                    x = (x, torch.zeros(1, self.model[17].d_model, s))
+                    x = (x, torch.zeros(1, 4, s))
                 return self.forward(x)[0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)
 
             m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])  # forward
@@ -398,6 +399,20 @@ class FusionNetModel(DetectionModel):
     def __init__(self, cfg="yolov8n-fusion.yaml", ch=6, nc=None, verbose=True):
         super().__init__(cfg, ch, nc, verbose)
 
+    def loss(self, batch, preds=None):
+        """
+        Compute loss.
+
+        Args:
+            batch (dict): Batch to compute loss on
+            preds (torch.Tensor | List[torch.Tensor]): Predictions.
+        """
+        if getattr(self, "criterion", None) is None:
+            self.criterion = self.init_criterion()
+
+        preds = self.forward((batch["img"], batch["df"])) if preds is None else preds
+        return self.criterion(preds, batch)
+
     def predict(self, x, profile=False, visualize=False, batch=None, augment=False, embed=None):
         """
         Perform a forward pass through the network.
@@ -417,6 +432,8 @@ class FusionNetModel(DetectionModel):
             if m.f != -1:  # if not from previous layer
                 if isinstance(m.f, int):
                     x = y[m.f]
+                elif isinstance(m.f, str):
+                    x = df
                 else:
                     x = [x if j == -1 else (y[j] if isinstance(j, int) else df) for j in m.f]  # from earlier layers
             if profile:
@@ -1107,12 +1124,20 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             elif isinstance(f[1], int):
                 c2 = ch[f[1]]
             else:
-                c2 = d["fusiondim"][f[0]]
+                c2 = d.get("fusiondim")[f[0]]
             args.insert(0, c2)
-        elif m is FusionConcat:
+        elif m is FusionConcatInput:
             c2 = ch[f[0]]
         elif m is FusionSplitResult:
             c2 = ch[f]
+        elif m is FusionLinear:
+            c2 = args[0]
+            c2 = make_divisible(min(c2, max_channels) * width, 8)
+            if isinstance(f, int):
+                c1 = ch[f]
+            else:
+                c1 = d.get("fusiondim").get(f)
+            args = [c1, c2]
         else:
             c2 = ch[f]
 

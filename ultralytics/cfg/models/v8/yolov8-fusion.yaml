@@ -12,7 +12,7 @@ scales: # model compound scaling constants, i.e. 'model=yolov8n.yaml' will call 
   x: [1.00, 1.25, 512]   # YOLOv8x summary: 365 layers, 68229648 parameters, 68229632 gradients, 258.5 GFLOPs
 
 fusiondim:
-  - src0: 4
+  src0: 4
 
 # YOLOv8.0n backbone
 backbone:
@@ -52,9 +52,10 @@ head:
   - [-1, 1, nn.Flatten, [2, -1]]
   - [9, 1, Conv, [1024, 1, 1]]
   - [-1, 1, nn.Flatten, [2, -1]]
-  - [[11, 13, 15], 1, FusionConcat, [-1]]
-  - [[-1, src0], 1, FusionSequence, [4, 8]]
-  - [17, 1, FusionSplitResult, [0, 64]]
-  - [17, 1, FusionSplitResult, [64, 320]]
-  - [17, 1, FusionSplitResult, [320, 1344]]
+  - [[11, 13, 15], 1, FusionConcatInput, [-1]]
+  - [src0, 1, FusionLinear, [1024]]
+  - [[16, -1], 1, FusionSequence, [2, 1]]
+  - [18, 1, FusionSplitResult, [0, 64]]
+  - [18, 1, FusionSplitResult, [64, 320]]
+  - [18, 1, FusionSplitResult, [320, 1344]]
   - [[-1], 1, Detect, [nc]]  # Detect(P3, P4, P5)

@@ -88,9 +88,10 @@ from .transformer import (
 
 from .fusion import (
     FuisonBlock,
-    FusionConcat,
+    FusionConcatInput,
     FusionSequence,
     FusionSplitResult,
+    FusionLinear,
 )
 
 __all__ = (
