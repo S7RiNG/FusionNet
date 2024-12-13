@@ -19,7 +19,7 @@ if __name__ == "__main__":
     
     model = FusionNet('ultralytics/cfg/models/v8/yolov8m-fusion.yaml', verbose=True)
     torchinfo.summary(model)
-    res = model.train(data=data, device=device, epochs=100, batch=2, cache='disk', workers= 4)
+    # res = model.train(data=data, device=device, epochs=100, batch=2, cache='disk', workers= 4)
 
     # model = YOLO('ultralytics/cfg/models/v8/yolov8m.yaml', verbose=True)
     # torchinfo.summary(model)

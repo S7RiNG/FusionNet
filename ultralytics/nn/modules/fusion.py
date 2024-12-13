@@ -43,12 +43,12 @@ class FuisonBlock(nn.Module):
 
         d_ff = d_model if d_ff is None else d_ff
 
-        self.quary_sa = nn.Linear(d_model, d_model)
-        self.key_sa = nn.Linear(d_model, d_model)
-        self.value_sa = nn.Linear(d_model, d_model)
+        # self.quary_sa = nn.Linear(d_model, d_model)
+        # self.key_sa = nn.Linear(d_model, d_model)
+        # self.value_sa = nn.Linear(d_model, d_model)
 
-        self.ma_sa = nn.MultiheadAttention(d_model, n_head, batch_first=True)
-        self.ln_sa = nn.LayerNorm(d_model)
+        # self.ma_sa = nn.MultiheadAttention(d_model, n_head, batch_first=True)
+        # self.ln_sa = nn.LayerNorm(d_model)
 
         self.quary_fa = nn.Linear(d_model, d_model)
         self.key_fa = nn.Linear(d_model, d_model)
@@ -65,9 +65,9 @@ class FuisonBlock(nn.Module):
 
 
         for m in (
-            self.quary_sa, 
-            self.key_sa, 
-            self.value_sa, 
+            # self.quary_sa, 
+            # self.key_sa, 
+            # self.value_sa, 
             self.quary_fa, 
             self.key_fa, 
             self.value_fa,
@@ -80,8 +80,9 @@ class FuisonBlock(nn.Module):
 
     def forward(self, data_q, data_kv):
         # self attention
-        self_attn = self.ma_sa(self.quary_sa(data_q), self.key_sa(data_q), self.value_sa(data_q))[0] + data_q
-        out_sa = self.ln_sa(self_attn)
+        # self_attn = self.ma_sa(self.quary_sa(data_q), self.key_sa(data_q), self.value_sa(data_q))[0] + data_q
+        # out_sa = self.ln_sa(self_attn)
+        out_sa = data_q
 
         # fusion attention
         fusion_attn = self.ma_fa(self.quary_fa(out_sa), self.key_fa(data_kv), self.value_fa(data_kv))[0] + out_sa

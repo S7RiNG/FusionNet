@@ -51,7 +51,7 @@ head:
   - [9, 1, Conv, [1024, 1, 1]]
   - [[10, 11, 12], 1, FusionConcatInput, [-1]]
   - [src0, 1, FusionLinear, [1024]]
-  - [[13, -1], 1, FusionSequence, [2, 1]]
+  - [[13, -1], 1, FusionSequence, [3, 1]]
   - [15, 1, FusionSplitResult, [0, 64]]
   - [-1, 1, C2f, [1024]]
   - [15, 1, FusionSplitResult, [64, 320]]
