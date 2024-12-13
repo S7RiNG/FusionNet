@@ -11,7 +11,7 @@ class FusionSequence(nn.Module):
         super().__init__()
         self.d_model = d_model
         d_ff = d_model if d_ff is None else d_ff
-        self.faltten = nn.Flatten(2, -1)     
+        # self.faltten = nn.Flatten(2, -1)     
         self.pe = PositionalEncoding1D(d_model)
         sq1, sq2 = [], []
 
@@ -26,7 +26,7 @@ class FusionSequence(nn.Module):
         
     def forward(self, x):# data: batch, ..., d_model
         data_1, data_2 = x
-        data_1, data_2 = self.faltten(data_1), self.faltten(data_2) #展平中间维度
+        # data_1, data_2 = self.faltten(data_1), self.faltten(data_2) #展平中间维度
         data_1, data_2 = data_1.permute(0, 2, 1), data_1.permute(0, 2, 1)
         data_1, data_2 = self.pe(data_1) + data_1, self.pe(data_2) + data_2 #位置编码
         for fusionblock1, fusionblock2 in zip(self.fusionseq1, self.fusionseq2):
@@ -57,9 +57,12 @@ class FuisonBlock(nn.Module):
         self.ma_fa = nn.MultiheadAttention(d_model, n_head, batch_first=True)
         self.ln_fa = nn.LayerNorm(d_model)
 
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(0.1)
         self.ff1 = nn.Linear(d_model, d_ff)
         self.ff2 = nn.Linear(d_ff, d_model)
         self.ln_ff = nn.LayerNorm(d_model)
+
 
         for m in (
             self.quary_sa, 
@@ -84,16 +87,18 @@ class FuisonBlock(nn.Module):
         fusion_attn = self.ma_fa(self.quary_fa(out_sa), self.key_fa(data_kv), self.value_fa(data_kv))[0] + out_sa
         out_fa = self.ln_fa(fusion_attn)
 
-        #feed forward
-        ff = self.ff2(self.ff1(out_fa)) + out_fa
-        return self.ln_ff(ff)
+        # feed forward
+        ff = self.ff2(self.dropout(self.relu(self.ff1(out_fa))))
+        return self.ln_ff(ff + out_fa)
     
 class FusionConcatInput(nn.Module):
     def __init__(self, dim):
         self.dim = dim
         super().__init__()
+        self.faltten = nn.Flatten(2, -1)
+
     def forward(self, x):
-        x = [y for y in x]
+        x = [self.faltten(y) for y in x]
         return torch.cat(x, dim=self.dim)
  
 class FusionSplitResult(nn.Module):

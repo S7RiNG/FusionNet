@@ -9,7 +9,7 @@ import cv2
 from .augment import LetterBox
 
 def read_lidarmap(path) -> Tensor:
-    return cv2.imread(path)
+    return cv2.imread(str(path))
 
 def read_lidarpoint(path) -> Tensor:
     return np.load(path)
@@ -19,7 +19,7 @@ def read_combo(img_path) -> Tensor:
     path_map = path.parent/'..'/'maps'/path.name
     path_point = Path.with_suffix((path.parent/'..'/'points'/path.name), '.npy') 
 
-    im = cv2.imread(path)
+    im = cv2.imread(str(path))
     map = read_lidarmap(path_map)
     point = read_lidarpoint(path_point)
     cat = np.concatenate([im, map], 2)
