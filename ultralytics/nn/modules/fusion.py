@@ -11,7 +11,6 @@ class FusionSequence(nn.Module):
         super().__init__()
         self.d_model = d_model
         d_ff = d_model if d_ff is None else d_ff
-        # self.faltten = nn.Flatten(2, -1)     
         self.pe = PositionalEncoding1D(d_model)
         sq1, sq2 = [], []
 
@@ -32,10 +31,10 @@ class FusionSequence(nn.Module):
         for fusionblock1, fusionblock2 in zip(self.fusionseq1, self.fusionseq2):
             data_1 = fusionblock1(data_1, data_2)
             data_2 = fusionblock2(data_2, data_1)
-        self.blockout(data_1, data_2)
+        data = self.blockout(data_1, data_2)
         
-        data_1, data_2 = data_1.permute(0, 2, 1), data_1.permute(0, 2, 1)
-        return data_1
+        data = data.permute(0, 2, 1)
+        return data
 
 class FuisonBlock(nn.Module):
     def __init__(self, d_model, d_ff=None, n_head=1):
@@ -93,7 +92,7 @@ class FuisonBlock(nn.Module):
         return self.ln_ff(ff + out_fa)
     
 class FusionConcatInput(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, ):
         self.dim = dim
         super().__init__()
         self.faltten = nn.Flatten(2, -1)
@@ -103,19 +102,23 @@ class FusionConcatInput(nn.Module):
         return torch.cat(x, dim=self.dim)
  
 class FusionSplitResult(nn.Module):
-    def __init__(self, n_start, n_end):
+    def __init__(self, level):
         super().__init__()
-
-        self.n_start = n_start
-        self.n_end = n_end
-        n = int(math.sqrt(n_end - n_start))
-        self.uf = nn.Unflatten(-1, torch.Size([n, n]))
+        self.level = level
         
-    
-    def forward(self, x):
-        r = self.uf(x[:,:,self.n_start:self.n_end])
+    def forward(self, x:torch.Tensor) -> torch.Tensor:
+        
+        length = x.shape[-1]
+        base = int(length / 21)
+        edge = [0, base, base * 5, base * 21]
+        n_end = edge[self.level]
+        n_start = edge[self.level - 1]
+        side = int(math.sqrt(n_end - n_start))
+        
+        r = x[:,:,n_start:n_end]
+        r = r.unflatten(-1, (side, side))
         return r
-
+    
 class FusionLinear(nn.Module):
     def __init__(self, c1, c2):
         super().__init__()
