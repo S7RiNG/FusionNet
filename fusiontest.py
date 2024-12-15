@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     epochs = 100
     batch = 1
-    net = r'ultralytics/cfg/models/fusion/yolov8m-fusion.yaml'
+    net = r'ultralytics/cfg/models/fusion/yolov8m-fusion_2.yaml'
     
     # Train
     # model = FusionNet('ultralytics/cfg/models/fusion/yolov8m-fusion_2.yaml', verbose=True)
@@ -28,7 +28,7 @@ if __name__ == "__main__":
     
     torchinfo.summary(model)
 
-    # res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=4)
+    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=4)
 
     # res = model.val(data=data, device=device, batch=batch, cache='disk', workers=4)
 

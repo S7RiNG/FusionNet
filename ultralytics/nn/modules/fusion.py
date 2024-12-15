@@ -126,8 +126,8 @@ class FuisonBlock_SA(nn.Module):
         out_fa = self.ln_fa(fusion_attn)
 
         # self attention
-        out_sa = self.ma_fa(out_fa, out_fa, out_fa)[0] + out_fa
-        out_sa = self.ln_fa(out_sa)
+        out_sa = self.ma_sa(out_fa, out_fa, out_fa)[0] + out_fa
+        out_sa = self.ln_sa(out_sa)
 
         # ff
         return self.seq_ff(out_sa)
