@@ -85,6 +85,8 @@ class FusionSequence_SA(nn.Module):
 
         for _ in range(repeat):
             sq1.append(FuisonBlock_SA(d_model, d_ff, n_head))
+            sq1.append(FuisonBlock_SA(d_model, d_ff, n_head))
+            sq2.append(FuisonBlock_SA(d_model, d_ff, n_head))
             sq2.append(FuisonBlock_SA(d_model, d_ff, n_head))
         self.fusionseq1 = nn.Sequential(*sq1)
         self.fusionseq2 = nn.Sequential(*sq2)
@@ -92,11 +94,18 @@ class FusionSequence_SA(nn.Module):
 
     def forward(self, x):# data: batch, ..., d_model
         data_1, data_2 = x
-        for fusionblock1, fusionblock2 in zip(self.fusionseq1, self.fusionseq2):
-            data_1 = fusionblock1(data_1, data_2)
-            data_2 = fusionblock2(data_2, data_1)
+
+        for idx, blk in enumerate(zip(self.fusionseq1, self.fusionseq2)):
+            fusionblock1, fusionblock2 = blk
+            if idx % 2 == 0:
+                data_1 = fusionblock1(data_1, data_2)
+                data_2 = fusionblock2(data_2, data_1)
+            else:
+                data_1 = fusionblock1(data_1, data_1)
+                data_2 = fusionblock2(data_2, data_2)
+            idx += 1
         data = self.blockout(data_1, data_2)
-        
+
         data = data.permute(0, 2, 1)
         return data
 
@@ -106,13 +115,10 @@ class FuisonBlock_SA(nn.Module):
 
         d_ff = d_model if d_ff is None else d_ff
 
-        self.ma_fa = nn.MultiheadAttention(d_model, n_head, batch_first=True)
-        self.ln_fa = nn.LayerNorm(d_model)
-
-        self.ma_sa = nn.MultiheadAttention(d_model, n_head, batch_first=True)
-        self.ln_sa = nn.LayerNorm(d_model)
+        self.ma = nn.MultiheadAttention(d_model, n_head, batch_first=True)
 
         self.seq_ff = nn.Sequential(
+            nn.LayerNorm(d_model),
             nn.Linear(d_model, d_ff),
             nn.SiLU(),
             nn.Linear(d_model, d_ff),
@@ -122,15 +128,9 @@ class FuisonBlock_SA(nn.Module):
 
     def forward(self, data_q, data_kv):
         # fusion attention
-        fusion_attn = self.ma_fa(data_q, data_kv, data_kv)[0] + data_q
-        out_fa = self.ln_fa(fusion_attn)
-
-        # self attention
-        out_sa = self.ma_sa(out_fa, out_fa, out_fa)[0] + out_fa
-        out_sa = self.ln_sa(out_sa)
-
+        fusion_attn = self.ma(data_q, data_kv, data_kv)[0]
         # ff
-        return self.seq_ff(out_sa)
+        return self.seq_ff(fusion_attn)
     
 class FusionConcatInput(nn.Module):
     def __init__(self, dim, ):
