@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
 import math
-from positional_encodings.torch_encodings import PositionalEncodingPermute1D, PositionalEncodingPermute2D
+from positional_encodings.torch_encodings import PositionalEncodingPermute1D, PositionalEncoding2D, PositionalEncodingPermute2D
 from torch.nn.init import constant_, xavier_uniform_
 from .block import C2f 
 
@@ -101,7 +101,6 @@ class FusionSequence_SA(nn.Module):
         data = data.permute(0, 2, 1)
         return data
 
-
 class FuisonBlock_SA(nn.Module):
     def __init__(self, d_model, d_ff=None, n_head=1):
         super().__init__()
@@ -140,21 +139,59 @@ class FuisonBlock_SA(nn.Module):
         # feed forward
         ff = self.ff2(self.dropout(self.relu(self.ff1(out_sa))))
         return self.ln_ff(ff + out_sa)
-
-class FuisonBlock_CSP(nn.Module):
-    def __init__(self, d_model, n_head=1):
+    
+class FuisonBlock_FC(nn.Module):
+    def __init__(self, d_model, d_ff=None, n_head=1):
         super().__init__()
 
         d_ff = d_model if d_ff is None else d_ff
 
-        self.ma_fa = nn.MultiheadAttention(d_model, n_head, batch_first=True)
+        self.ma_fa = nn.MultiheadAttention(d_model, n_head, batch_first=True, dropout=0.1)
         self.ln_fa = nn.LayerNorm(d_model)
 
-        self.ma_sa = nn.MultiheadAttention(d_model, n_head, batch_first=True)
+        self.ma_sa = nn.MultiheadAttention(d_model, n_head, batch_first=True, dropout=0.1)
         self.ln_sa = nn.LayerNorm(d_model)
 
-        self.split = nn.Sequential(FusionSplitResult(l) for l in (range(3) + 1))
-        self.csp = nn.Sequential(C2f(d_model, d_model) for _ in range(3))
+        self.relu = nn.ReLU()
+        self.ff1 = nn.Linear(d_model, d_ff)
+        self.ff2 = nn.Linear(d_ff, d_model)
+        self.ln_ff = nn.LayerNorm(d_model)
+
+
+        for m in (
+            self.ff1,
+            self.ff2,
+            ):
+            xavier_uniform_(m.weight.data)
+            constant_(m.bias.data, 0.0)
+
+
+    def forward(self, data_q, data_kv):
+        # fusion attention
+        fusion_attn = self.ma_fa(data_q, data_kv,data_kv)[0] + data_q
+        out_fa = self.ln_fa(fusion_attn)
+
+        self_attn = self.ma_sa(out_fa, out_fa, out_fa)[0] + out_fa
+        out_sa = self.ln_fa(self_attn)
+
+        # feed forward
+        ff = self.relu(self.ff2(self.relu(self.ff1(out_sa))))
+        return self.ln_ff(ff + out_sa)
+
+
+class FuisonBlock_CSP(nn.Module):
+    def __init__(self, d_model, d_kv=None, n_cat=3, n_head=1):
+        super().__init__()
+
+        d_kv = d_model if d_kv is None else d_kv
+
+        self.ma_fa = nn.MultiheadAttention(d_model, n_head, batch_first=True, kdim=d_kv, vdim=d_kv, dropout=0.1)
+        self.ln_fa = nn.LayerNorm(d_model)
+
+        self.ma_sa = nn.MultiheadAttention(d_model, n_head, batch_first=True, dropout=0.1)
+        self.ln_sa = nn.LayerNorm(d_model)
+
+        self.csp = nn.Sequential(*[C2f(d_model, d_model) for _ in range(n_cat)])
         self.cat = FusionConcatInput(-1)
 
     def forward(self, data_q, data_kv):
@@ -166,11 +203,22 @@ class FuisonBlock_CSP(nn.Module):
         out_sa = self.ln_fa(self_attn)
         
         out_sa = out_sa.permute(0, 2, 1)
-        out_split = [split(out_sa) for split in self.split]
+        out_split = self._split(out_sa)
         out_csp = [csp(x) for x, csp in zip(out_split, self.csp)]
         out = self.cat(out_csp).permute(0, 2, 1)
         return out
     
+    def _split(self, x:torch.Tensor) -> list[torch.Tensor]:
+        n_cat = len(self.csp)
+        nx = x.shape[-1]
+        n_list = [(4 ** level) for level in range(n_cat)]
+        n_list = [sum(n_list[0:(i + 1)]) for i in range(n_cat)]
+        base = nx // n_list[-1]
+        edge = [n * base for n in n_list]
+        edge.insert(0, 0)
+        split = [x[:, :, edge[i]:edge[i+1]] for i in range(n_cat)]
+        return [s.unflatten(-1, [int(math.sqrt(s.shape[-1]))] * 2) for s in split]
+
 class FusionConcatInput(nn.Module):
     def __init__(self, dim, ):
         self.dim = dim
@@ -227,20 +275,13 @@ class FusionLinear(nn.Module):
     
 class FusionConv1d(FusionLinear):
     pass
-#     def __init__(self, c1, c2):
-#         super().__init__()
-#         self.cv1d = nn.Conv1d(c1, c2, 1, 1)
-
-#     def forward(self, x:torch.Tensor):
-#         x = self.cv1d(x)
-#         return x.transpose(1, -1)
 
 class FusionExtend1d(nn.Module):
     def __init__(self, c1, c2):
         super().__init__()
-        scale = int(c2 / c1)
-        c_in1 = int(math.sqrt(scale / 2))
-        c_in2 = c2 / 2
+        scale = c2 // c1
+        c_in1 = int(math.sqrt(scale // 2)) * c1
+        c_in2 = c2 // 2
         c_in3 = c2 - c_in2
 
         self.cv1 = nn.Conv1d(c1, c_in1, 1, 1)
@@ -253,3 +294,53 @@ class FusionExtend1d(nn.Module):
         y1 = self.act(self.cv2(self.act(self.cv1(x))))
         y2 = self.act(self.cv3(x))
         return self.bn1(torch.cat([y1, y2], 1))
+
+class FusionPointAttenetion(nn.Module):
+    def __init__(self, d_model, size, n_head = 1):
+        super().__init__()
+        self.pe2d = PositionalEncoding2D(d_model)
+        self.size = [*size, d_model]
+        self.fb = FuisonBlock_CSP(d_model, n_cat=1, n_head=n_head)
+        # self.ma = nn.MultiheadAttention(d_model, num_heads=n_head, batch_first=True)
+        # self.ln = nn.LayerNorm(d_model)
+        
+        
+    def forward(self, x:torch.Tensor):
+        b = x.shape[0]
+        shape = (b, *self.size)
+        quray = torch.Tensor(self.pe2d(torch.zeros(shape))).flatten(1,2)
+        return self.fb(quray, x)
+        # attn = self.ma(quray, x, x)[0] + quray
+        # return self.ln(attn)
+
+    
+class FusionImageLidar(nn.Module):
+    def __init__(self, d_img, d_ldr, repeat=1, n_head=1):
+        super().__init__()
+
+        self.pa = FusionPointAttenetion(d_ldr, [20, 20], n_head=n_head)
+
+        self.seq_img = nn.Sequential()
+        self.seq_ldr = nn.Sequential()
+
+        for _ in range(repeat):
+            self.seq_img.append(FuisonBlock_CSP(d_img, d_ldr, n_head=n_head))
+            self.seq_ldr.append(FuisonBlock_CSP(d_ldr, d_img, n_head=n_head, n_cat=1))
+
+        self.blockout = FuisonBlock_CSP(d_img, d_ldr, n_head=n_head)
+        
+    def forward(self, x):# data: batch, d_model, n
+        data_1, data_2 = x
+        data_1, data_2 = data_1.permute(0, 2, 1), data_2.permute(0, 2, 1)
+
+        data_2 = self.pa(data_2)
+
+        for fusionblock1, fusionblock2 in zip(self.seq_img, self.seq_ldr):
+            data_1 = fusionblock1(data_1, data_2)
+            data_2 = fusionblock2(data_2, data_1)
+
+        data = self.blockout(data_1, data_2)
+
+        data = data.permute(0, 2, 1)
+        return data
+

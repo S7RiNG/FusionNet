@@ -68,6 +68,8 @@ from ultralytics.nn.modules import (
     FusionSplitResult,
     FusionLinear,
     FusionConv1d,
+    FusionExtend1d,
+    FusionImageLidar
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1120,14 +1122,11 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
-        elif m in {FusionSequence, FusionSequence_SA}:
+        elif m in {FusionSequence, FusionSequence_SA, FusionImageLidar}:
             #"from" is int or str
-            if isinstance(f[0], int):
-                c2 = ch[f[0]]
-            elif isinstance(f[1], int):
-                c2 = ch[f[1]]
-            else:
-                c2 = d.get("fusiondim")[f[0]]
+            c2 = ch[f[0]]
+            if m is FusionImageLidar:
+                args.insert(0, ch[f[1]])
             args.insert(0, c2)
         elif m in {FusionConcatInput, FusionConcatInput_PE}:
             c2 = ch[f[0]]
@@ -1135,7 +1134,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 args.append(c2)
         elif m is FusionSplitResult:
             c2 = ch[f]
-        elif m in {FusionLinear, FusionConv1d}:
+        elif m in {FusionLinear, FusionConv1d, FusionExtend1d}:
             c2 = args[0]
             c2 = make_divisible(min(c2, max_channels) * width, 8)
             if isinstance(f, int):

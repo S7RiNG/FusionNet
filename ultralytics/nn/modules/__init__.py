@@ -96,6 +96,8 @@ from .fusion import (
     FusionSplitResult,
     FusionLinear,
     FusionConv1d,
+    FusionExtend1d,
+    FusionImageLidar,
 )
 
 __all__ = (
