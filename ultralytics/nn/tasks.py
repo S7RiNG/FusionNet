@@ -1132,7 +1132,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         elif m in {FusionConcatInput, FusionConcatInput_PE}:
             c2 = ch[f[0]]
             if m is FusionConcatInput_PE:
-                args.insert(0, c2)
+                args.append(c2)
         elif m is FusionSplitResult:
             c2 = ch[f]
         elif m in {FusionLinear, FusionConv1d}:

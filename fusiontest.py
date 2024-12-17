@@ -1,4 +1,4 @@
-import sys
+import sys, os, time
 from ultralytics.models.fusion import FusionNet
 from ultralytics.models.yolo import YOLO
 from ultralytics.nn.modules.fusion import FusionSequence, FusionLinear
@@ -18,24 +18,23 @@ if __name__ == "__main__":
         device = 'mps'
 
     epochs = 100
-    batch = 1
-    net = r'ultralytics/cfg/models/fusion/yolov8m-fusion_2.yaml'
+    batch = 2
+    # time.sleep(3600)
     
     # Train
-    # model = FusionNet('ultralytics/cfg/models/fusion/yolov8m-fusion_2.yaml', verbose=True)
+    # model = FusionNet('ultralytics/cfg/models/fusion/yolov8m-fusion.yaml', verbose=True)
     # model = YOLO('ultralytics/cfg/models/v8/yolov8m.yaml', verbose=True)
-    model = FusionNet(net)
+    # model = FusionNet('ultralytics/cfg/models/fusion/yolov8m-fusion_2.yaml', verbose=True)
     
-    torchinfo.summary(model)
+    # torchinfo.summary(model)
 
-    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=4)
+    # res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=4)
 
     # res = model.val(data=data, device=device, batch=batch, cache='disk', workers=4)
 
     # Resume
-    # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train\weights\last.pt')
-    # torchinfo.summary(model)
-    # res = model.train(resume=True)
+    model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train14\weights\last.pt')
+    res = model.train(resume=True)
 
     # Val
     # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train\weights\best.pt')
@@ -44,15 +43,14 @@ if __name__ == "__main__":
 
     # model = YOLO('ultralytics/cfg/models/v8/yolov8m.yaml', verbose=True)
     # torchinfo.summary(model)
-    # res = model.train(data=data, device=device, epochs=100, batch=14, cache=True)
+    # res = model.train(data=data, device=device, epochs=100, batch=32, cache='disk', augment=False)
 
-    
+
     # ln = LiDAR_norm()
     # lb = LetterBox_LiDAR()
-    # fl = FusionLinear(4,345)
     # labels = {}
 
-    # nploaded = np.load(r'E:\Dataset\kitti\yolo_fusion\train\images\000000.npz')
+    # nploaded = np.load(r'E:\Dataset\kitti\yolo_fusion\train\images\000032.npz')
     # im, df = nploaded['im'], nploaded['df']
     
     # labels['img'] = im

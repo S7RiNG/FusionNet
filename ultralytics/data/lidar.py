@@ -124,27 +124,30 @@ class LetterBox_LiDAR(LetterBox):
         lidar_scale = np.array([new_unpad[0]/new_shape[1], new_unpad[1]/new_shape[0]], dtype=np.float32) #w, h scale
         lidar_offset = (1.0 - lidar_scale)/2
         df[:, 0:2] = (df[:, 0:2] * lidar_scale)  + lidar_offset
+
+        df = df[np.argsort(df[:,2], kind="stable")[::-1]]
+
         len_df = df.shape[0]
-        len_zero = 30000 - len_df
+        len_zero = 8400 - len_df
         if len_zero > 0:
             zeros = np.zeros([len_zero, 4], dtype=df.dtype)
             df = np.concatenate([df, zeros], 0)
         else:
-            df = df[:30000]
-        df = df.transpose()
+            df = df[:8400]
+        df = df.T
         df = torch.from_numpy(df)
         
         if False:
-            img, lid = torch.split(torch.from_numpy(img), 3, 0)
+            img_sh, lid = torch.split(torch.from_numpy(img), 3, -1)
             from matplotlib import pyplot as PLT
             pt_show = df
             shape_show = int(new_shape[1])
-            pt_show[:, 0:2] = pt_show[:, 0:2] * shape_show
-            u,v,z,i = pt_show.T
+            pt_show[0:2] = pt_show[0:2] * shape_show
+            u,v,z,i = pt_show
             PLT.figure(figsize=(12,5),dpi=96,tight_layout=True)
-            PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2)
+            PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2) #'rainbow_r'
             PLT.axis([0,shape_show,shape_show,0])
-            PLT.imshow(img)
+            PLT.imshow(img_sh)
             PLT.show()
 
 
