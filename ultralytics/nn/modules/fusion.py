@@ -308,7 +308,7 @@ class FusionPointAttenetion(nn.Module):
     def forward(self, x:torch.Tensor):
         b = x.shape[0]
         shape = (b, *self.size)
-        quray = torch.Tensor(self.pe2d(torch.zeros(shape))).flatten(1,2)
+        quray = torch.Tensor(self.pe2d(torch.zeros(shape, device=x.device))).flatten(1,2)
         return self.fb(quray, x)
         # attn = self.ma(quray, x, x)[0] + quray
         # return self.ln(attn)
