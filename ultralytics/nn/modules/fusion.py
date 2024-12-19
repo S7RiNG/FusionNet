@@ -180,15 +180,15 @@ class FuisonBlock_FC(nn.Module):
 
 
 class FuisonBlock_CSP(nn.Module):
-    def __init__(self, d_model, d_kv=None, n_cat=3, n_head=1):
+    def __init__(self, d_model, d_kv=None, n_cat=3, n_head=1, dropout=0):
         super().__init__()
 
         d_kv = d_model if d_kv is None else d_kv
 
-        self.ma_fa = nn.MultiheadAttention(d_model, n_head, batch_first=True, kdim=d_kv, vdim=d_kv, dropout=0.1)
+        self.ma_fa = nn.MultiheadAttention(d_model, n_head, batch_first=True, kdim=d_kv, vdim=d_kv, dropout=dropout)
         self.ln_fa = nn.LayerNorm(d_model)
 
-        self.ma_sa = nn.MultiheadAttention(d_model, n_head, batch_first=True, dropout=0.1)
+        self.ma_sa = nn.MultiheadAttention(d_model, n_head, batch_first=True, dropout=dropout)
         self.ln_sa = nn.LayerNorm(d_model)
 
         self.csp = nn.Sequential(*[C2f(d_model, d_model) for _ in range(n_cat)])
@@ -296,11 +296,11 @@ class FusionExtend1d(nn.Module):
         return self.bn1(torch.cat([y1, y2], 1))
 
 class FusionPointAttenetion(nn.Module):
-    def __init__(self, d_model, size, n_head = 1):
+    def __init__(self, d_model, size, n_head=1, dropout=0):
         super().__init__()
         self.pe2d = PositionalEncoding2D(d_model)
         self.size = [*size, d_model]
-        self.fb = FuisonBlock_CSP(d_model, n_cat=1, n_head=n_head)
+        self.fb = FuisonBlock_CSP(d_model, n_cat=1, n_head=n_head, dropout=dropout)
         # self.ma = nn.MultiheadAttention(d_model, num_heads=n_head, batch_first=True)
         # self.ln = nn.LayerNorm(d_model)
         
@@ -315,19 +315,19 @@ class FusionPointAttenetion(nn.Module):
 
     
 class FusionImageLidar(nn.Module):
-    def __init__(self, d_img, d_ldr, repeat=1, n_head=1):
+    def __init__(self, d_img, d_ldr, repeat=1, n_head=1, dropout=0):
         super().__init__()
 
-        self.pa = FusionPointAttenetion(d_ldr, [20, 20], n_head=n_head)
+        self.pa = FusionPointAttenetion(d_ldr, [20, 20], n_head=n_head, dropout=dropout)
 
         self.seq_img = nn.Sequential()
         self.seq_ldr = nn.Sequential()
 
         for _ in range(repeat):
-            self.seq_img.append(FuisonBlock_CSP(d_img, d_ldr, n_head=n_head))
-            self.seq_ldr.append(FuisonBlock_CSP(d_ldr, d_img, n_head=n_head, n_cat=1))
+            self.seq_img.append(FuisonBlock_CSP(d_img, d_ldr, n_head=n_head, n_cat=3, dropout=dropout))
+            self.seq_ldr.append(FuisonBlock_CSP(d_ldr, d_img, n_head=n_head, n_cat=1, dropout=dropout))
 
-        self.blockout = FuisonBlock_CSP(d_img, d_ldr, n_head=n_head)
+        self.blockout = FuisonBlock_CSP(d_img, d_ldr, n_head=n_head, dropout=dropout)
         
     def forward(self, x):# data: batch, d_model, n
         data_1, data_2 = x
