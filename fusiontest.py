@@ -28,7 +28,7 @@ if __name__ == "__main__":
     
     torchinfo.summary(model)
 
-    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=4, weight_decay=0.001)
+    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=4)
 
     # res = model.val(data=data, device=device, batch=batch, cache='disk', workers=4)
 

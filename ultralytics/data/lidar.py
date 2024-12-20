@@ -125,16 +125,19 @@ class LetterBox_LiDAR(LetterBox):
         lidar_offset = (1.0 - lidar_scale)/2
         df[:, 0:2] = (df[:, 0:2] * lidar_scale)  + lidar_offset
 
-        df = df[np.argsort(df[:,2], kind="stable")[::-1]]
+        # df = df[np.argsort(df[:,2], kind="stable")[::-1]]
 
+        len_max = 28000
         len_df = df.shape[0]
-        len_zero = 8400 - len_df
+        len_zero = len_max - len_df
         if len_zero > 0:
             zeros = np.zeros([len_zero, 4], dtype=df.dtype)
             df = np.concatenate([df, zeros], 0)
         else:
-            df = df[:8400]
+            print('LiDAR points exceed', len_max)
+            df = df[:len_max]
         df = df.T
+        np.random.shuffle(df)
         df = torch.from_numpy(df)
         
         if False:
