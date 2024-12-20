@@ -69,7 +69,8 @@ from ultralytics.nn.modules import (
     FusionLinear,
     FusionConv1d,
     FusionExtend1d,
-    FusionImageLidar
+    FusionImageLidar,
+    FusionLidar,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -343,7 +344,8 @@ class DetectionModel(BaseModel):
                 if isinstance(self, FusionNetModel):
                     x = (x, torch.zeros(1, 4, s))
                 return self.forward(x)[0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)
-
+            if isinstance(self, FusionNetModel):
+                    s = 640
             m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])  # forward
             self.stride = m.stride
             m.bias_init()  # only run once
@@ -1128,6 +1130,11 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             if m is FusionImageLidar:
                 args.insert(0, ch[f[1]])
             args.insert(0, c2)
+        elif m is FusionLidar:
+            c2 = args[0]
+            c2 = make_divisible(min(c2, max_channels) * width, 8)
+            c1 = ch[f]
+            args = [c1, c2, *args[1:]]
         elif m in {FusionConcatInput, FusionConcatInput_PE}:
             c2 = ch[f[0]]
             if m is FusionConcatInput_PE:

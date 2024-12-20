@@ -3,7 +3,7 @@ import torch
 import math
 from positional_encodings.torch_encodings import PositionalEncodingPermute1D, PositionalEncoding2D, PositionalEncodingPermute2D
 from torch.nn.init import constant_, xavier_uniform_
-from .block import C2f 
+from .block import C2f, SPPF
 
 __all__ = ('FuisonBlock', "FusionConcatInput", 'FusionSequence', 'FusionSplitResult', 'FusionLinear')
 
@@ -344,3 +344,29 @@ class FusionImageLidar(nn.Module):
         data = data.permute(0, 2, 1)
         return data
 
+class FusionLidar(nn.Module):
+    def __init__(self, c1, c2, repeat=1, n_head=1, dropout=0):
+        super().__init__()
+
+        self.pa = FusionPointAttenetion(c1, [20, 20], n_head=n_head, dropout=dropout)
+
+        self.seq = nn.Sequential()
+
+        for _ in range(repeat):
+            self.seq.append(FuisonBlock_CSP(c1, c1, n_head=n_head, dropout=dropout, n_cat=1))
+
+        self.sppf = SPPF(c1, c2)
+        
+    def forward(self, x):# data: batch, d_model, n
+        data = x.permute(0, 2, 1)
+
+        out = self.pa(data)
+        
+        for layer in self.seq:
+            out = layer(out, data)
+        
+        out = out.permute(0, 2, 1)
+        side = int(math.sqrt(out.shape[-1]))
+        out = out.unflatten(-1, (side, side))
+        out = self.sppf(out)
+        return out
