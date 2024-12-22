@@ -87,7 +87,7 @@ class FusionNetValidator(DetectionValidator):
             self.dataloader = self.dataloader or self.get_dataloader(self.data.get(self.args.split), self.args.batch)
 
             model.eval()
-            model.warmup(imgsz=(1 if pt else self.args.batch, 6, imgsz, imgsz))  # warmup
+            model.warmup(imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz))  # warmup
 
         self.run_callbacks("on_val_start")
         dt = (
@@ -150,10 +150,23 @@ class FusionNetValidator(DetectionValidator):
                 LOGGER.info(f"Results saved to {colorstr('bold', self.save_dir)}")
             return stats
 
-    
     def plot_val_samples(self, batch, ni):
         """Plot validation image samples."""
-        lids, imgs = torch.split(batch["img"], 3, 1)#RGB
+        if batch["img"].shape[1] == 6:
+            lids, imgs = torch.split(batch["img"], 3, 1)  # RGB
+            plot_images(
+                lids,
+                batch["batch_idx"],
+                batch["cls"].squeeze(-1),
+                batch["bboxes"],
+                paths=batch["im_file"],
+                fname=self.save_dir / f"val_batch_LiDAR{ni}_labels.jpg",
+                names=self.names,
+                on_plot=self.on_plot,
+            )
+        else:
+            imgs = batch["img"]  # RGB
+
         plot_images(
             imgs,
             batch["batch_idx"],
@@ -164,20 +177,21 @@ class FusionNetValidator(DetectionValidator):
             names=self.names,
             on_plot=self.on_plot,
         )
-        plot_images(
-            lids,
-            batch["batch_idx"],
-            batch["cls"].squeeze(-1),
-            batch["bboxes"],
-            paths=batch["im_file"],
-            fname=self.save_dir / f"val_batch_LiDAR{ni}_labels.jpg",
-            names=self.names,
-            on_plot=self.on_plot,
-        )
 
     def plot_predictions(self, batch, preds, ni):
         """Plots predicted bounding boxes on input images and saves the result."""
-        lids, imgs = torch.split(batch["img"], 3, 1)#RGB
+        if batch["img"].shape[1] == 6:
+            lids, imgs = torch.split(batch["img"], 3, 1)  # RGB
+            plot_images(
+                lids,
+                *output_to_target(preds, max_det=self.args.max_det),
+                paths=batch["im_file"],
+                fname=self.save_dir / f"val_batch_LiDAR{ni}_pred.jpg",
+                names=self.names,
+                on_plot=self.on_plot,
+            )  # pred
+        else:
+            imgs = batch["img"]  # RGB
         plot_images(
             imgs,
             *output_to_target(preds, max_det=self.args.max_det),
@@ -186,16 +200,6 @@ class FusionNetValidator(DetectionValidator):
             names=self.names,
             on_plot=self.on_plot,
         )  # pred
-        plot_images(
-            lids,
-            *output_to_target(preds, max_det=self.args.max_det),
-            paths=batch["im_file"],
-            fname=self.save_dir / f"val_batch_LiDAR{ni}_pred.jpg",
-            names=self.names,
-            on_plot=self.on_plot,
-        )  # pred
-
-
 
 
 class FusionNetAutoBackend(AutoBackend):
@@ -232,7 +236,7 @@ class FusionNetAutoBackend(AutoBackend):
         else:
             return self.from_numpy(y)
         
-    def warmup(self, imgsz=(1, 6, 640, 640), dfsz=(1,4,30000)):
+    def warmup(self, imgsz=(1, 3, 640, 640), dfsz=(1,4,30000)):
         """
         Warm up the model by running one forward pass with a dummy input.
 

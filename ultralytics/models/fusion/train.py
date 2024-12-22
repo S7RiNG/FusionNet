@@ -14,7 +14,7 @@ class FusionNetTrainer(DetectionTrainer):
     # def __init__(self, overrides=None):
     #     super().__init__(overrides)
 
-    def build_dataset(self, img_path, map_path, point_path, mode="train", batch=None):
+    def build_dataset(self, img_path, mode="train", batch=None):
         """
         Build FusionNet Dataset.
 
@@ -24,7 +24,7 @@ class FusionNetTrainer(DetectionTrainer):
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
         gs = max(int(de_parallel(self.model).stride.max() if self.model else 0), 32)
-        return build_fusion_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs)
+        return build_fusion_dataset(self.args, img_path, batch, self.data, mode=mode, stride=gs)
 
     def preprocess_batch(self, batch):
         """Add data of fusion : 'dfs' """
@@ -47,7 +47,20 @@ class FusionNetTrainer(DetectionTrainer):
     
     def plot_training_samples(self, batch, ni):
         """Plots training samples with their annotations."""
-        lids, imgs = torch.split(batch["img"], 3, 1)#RGB
+        if batch["img"].shape[1] == 6:
+            lids, imgs = torch.split(batch["img"], 3, 1)  # RGB
+            plot_images(
+                images=lids,
+                batch_idx=batch["batch_idx"],
+                cls=batch["cls"].squeeze(-1),
+                bboxes=batch["bboxes"],
+                paths=batch["im_file"],
+                fname=self.save_dir / f"train_batch_LiDAR{ni}.jpg",
+                on_plot=self.on_plot,
+            )
+        else:
+            imgs = batch["img"]  # RGB
+
         plot_images(
             images=imgs,
             batch_idx=batch["batch_idx"],
@@ -57,14 +70,6 @@ class FusionNetTrainer(DetectionTrainer):
             fname=self.save_dir / f"train_batch_RGB{ni}.jpg",
             on_plot=self.on_plot,
         )
-        plot_images(
-            images=lids,
-            batch_idx=batch["batch_idx"],
-            cls=batch["cls"].squeeze(-1),
-            bboxes=batch["bboxes"],
-            paths=batch["im_file"],
-            fname=self.save_dir / f"train_batch_LiDAR{ni}.jpg",
-            on_plot=self.on_plot,
-        )
-    
+
+
     

@@ -299,7 +299,8 @@ class FusionDataset(YOLODataset):
         single_cls=False,
         classes=None,
         fraction=1.0,
-        data = None
+        data = None,
+        mode = 'train'
     ):
         """Initialize BaseDataset with given configuration and options."""
         super(Dataset, self).__init__()
@@ -345,6 +346,7 @@ class FusionDataset(YOLODataset):
         elif self.cache == "disk" and self.check_cache_disk():
             self.cache_images()
 
+        self.mode = mode
         # Transforms
         self.transforms = self.build_transforms(hyp=hyp)
 
@@ -420,7 +422,7 @@ class FusionDataset(YOLODataset):
     
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
-        transforms = Compose([LiDAR_norm(), LetterBox_LiDAR(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+        transforms = Compose([LiDAR_norm(), LetterBox_LiDAR(new_shape=(self.imgsz, self.imgsz), scaleup=False, mode=self.mode)])
         transforms.append(
             Format(
                 bbox_format="xywh",

@@ -120,6 +120,7 @@ def build_fusion_dataset(cfg, img_path, batch, data, mode="train", rect=False, s
         classes=cfg.classes,
         data=data,
         fraction=cfg.fraction if mode == "train" else 1.0,
+        mode=mode
     )
 
 

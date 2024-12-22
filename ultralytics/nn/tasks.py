@@ -403,7 +403,7 @@ class DetectionModel(BaseModel):
 
 
 class FusionNetModel(DetectionModel):
-    def __init__(self, cfg="yolov8n-fusion.yaml", ch=6, nc=None, verbose=True):
+    def __init__(self, cfg="yolov8n-fusion.yaml", ch=3, nc=None, verbose=True):
         super().__init__(cfg, ch, nc, verbose)
 
     def loss(self, batch, preds=None):

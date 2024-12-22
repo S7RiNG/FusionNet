@@ -20,10 +20,10 @@ def read_combo(img_path) -> Tensor:
     path_point = Path.with_suffix((path.parent/'..'/'points'/path.name), '.npy') 
 
     im = cv2.imread(str(path))
-    map = read_lidarmap(path_map)
+    # map = read_lidarmap(path_map)
     point = read_lidarpoint(path_point)
-    cat = np.concatenate([im, map], 2)
-    return cat, point
+    # cat = np.concatenate([im, map], 2)
+    return im, point
 
 class LiDAR_norm:
     def __call__(self, labels=None, image=None, df=None):
@@ -34,7 +34,7 @@ class LiDAR_norm:
 
         df = df.astype(np.float32)
 
-        h, w = img.shape[:2]
+        h, w = labels.get("ori_shape")
         df[:,0] = df[:,0]/w
         df[:,1] = df[:,1]/h
         df[:,2:4] = df[:,2:4]/255
@@ -47,8 +47,9 @@ class LiDAR_norm:
 
 
 class LetterBox_LiDAR(LetterBox):
-    def __init__(self, new_shape=(640, 640), auto=False, scaleFill=False, scaleup=True, center=True, stride=32):
+    def __init__(self, new_shape=(640, 640), auto=False, scaleFill=False, scaleup=True, center=True, stride=32, mode:bool='train'):
         super().__init__(new_shape, auto, scaleFill, scaleup, center, stride)
+        self.mode = mode
 
     def __call__(self, labels=None, image=None, df=None):
         """
@@ -102,22 +103,26 @@ class LetterBox_LiDAR(LetterBox):
             dh /= 2
 
         rgb = img[:,:,:3]
-        lid = img[:,:,3:]
         if shape[::-1] != new_unpad:  # resize
             rgb = cv2.resize(rgb, new_unpad, interpolation=cv2.INTER_LINEAR)
-            lid = cv2.resize(lid, new_unpad, interpolation=cv2.INTER_NEAREST)
             
+        if img.shape[-1] == 6:
+            lid = img[:,:,3:]
+            lid = cv2.resize(lid, new_unpad, interpolation=cv2.INTER_NEAREST)
 
         top, bottom = int(round(dh - 0.1)) if self.center else 0, int(round(dh + 0.1))
         left, right = int(round(dw - 0.1)) if self.center else 0, int(round(dw + 0.1))
         rgb = cv2.copyMakeBorder(
             rgb, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114)
         )  # add border to rgb
-        lid = cv2.copyMakeBorder(
-            lid, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(0, 0, 0)
-        )  # add border to lidar
 
-        img = np.concatenate((rgb, lid), axis=2)
+        if img.shape[-1] == 6:
+            lid = cv2.copyMakeBorder(
+                lid, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(0, 0, 0)
+            )  # add border to lidar
+            img = np.concatenate((rgb, lid), axis=2)
+        else:
+            img = rgb
 
         #LiDAR point
         df = np.array(df)
@@ -126,18 +131,25 @@ class LetterBox_LiDAR(LetterBox):
         df[:, 0:2] = (df[:, 0:2] * lidar_scale)  + lidar_offset
 
         # df = df[np.argsort(df[:,2], kind="stable")[::-1]]
-
+        np.random.shuffle(df)
+        
         len_max = 28000
         len_df = df.shape[0]
         len_zero = len_max - len_df
+
+        
         if len_zero > 0:
             zeros = np.zeros([len_zero, 4], dtype=df.dtype)
-            df = np.concatenate([df, zeros], 0)
+            df = np.concatenate([df[:len_df], zeros], 0)
         else:
-            print('LiDAR points exceed', len_max)
+            print('!!! LiDAR points exceed', len_max)
             df = df[:len_max]
+        
+        if self.mode == "train":
+            noise = np.random.normal(0, 0.005, df.shape)
+            df += noise
+        
         df = df.T
-        np.random.shuffle(df)
         df = torch.from_numpy(df)
         
         if False:
@@ -165,3 +177,34 @@ class LetterBox_LiDAR(LetterBox):
             return labels
         else:
             return img, df
+        
+class LiDARAug():
+    def __init__(self, mode='train', len_max=28000, randomchoice=0.8):
+        self.mode = mode
+
+    def __call__(self, labels=None, df=None, ):
+        if labels is None:
+            labels = {}
+        df = labels.get("df") if df is None else df
+
+        np.random.shuffle(df)
+        
+        len_max = 28000
+        len_df = df.shape[0]
+        len_zero = len_max - len_df
+
+        
+        if len_zero > 0:
+            zeros = np.zeros([len_zero, 4], dtype=df.dtype)
+            df = np.concatenate([df[:len_df], zeros], 0)
+        else:
+            print('!!! LiDAR points exceed', len_max)
+            df = df[:len_max]
+        
+        if self.mode == "train":
+            noise = np.random.normal(0, 0.005, df.shape)
+            df += noise
+        
+        df = df.T
+        df = torch.from_numpy(df)
+
