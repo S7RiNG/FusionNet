@@ -433,7 +433,9 @@ class FusionNetModel(DetectionModel):
         Returns:
             (torch.Tensor): The last output of the model.
         """
+        from ultralytics.nn.modules.fusion import FusionLidar
         x, df = x
+        rgbshape = x.shape[-2:]
         y, dt, embeddings = [], [], []  # outputs
         for m in self.model:
             if m.f != -1:  # if not from previous layer
@@ -445,7 +447,10 @@ class FusionNetModel(DetectionModel):
                     x = [x if j == -1 else (y[j] if isinstance(j, int) else df) for j in m.f]  # from earlier layers
             if profile:
                 self._profile_one_layer(m, x, dt)
-            x = m(x)  # run
+            if isinstance(m, FusionLidar):
+                x = m(x, rgbshape)
+            else:
+                x = m(x)  # run
             y.append(x if m.i in self.save else None)  # save output
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)

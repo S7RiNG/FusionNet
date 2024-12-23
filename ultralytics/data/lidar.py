@@ -126,8 +126,11 @@ class LetterBox_LiDAR(LetterBox):
 
         #LiDAR point
         df = np.array(df)
-        lidar_scale = np.array([new_unpad[0]/new_shape[1], new_unpad[1]/new_shape[0]], dtype=np.float32) #w, h scale
-        lidar_offset = (1.0 - lidar_scale)/2
+        lidar_scale = np.array([new_unpad[0]/(new_unpad[0] + left + right), new_unpad[1]/(new_unpad[1] + top + bottom)], dtype=np.float32) #w, h scale
+        lidar_offset = (1.0 - lidar_scale) * [
+            1 if (left + right) == 0 else (left / (left + right)),
+            1 if (top + bottom) == 0 else (top / (top + bottom))
+            ]
         df[:, 0:2] = (df[:, 0:2] * lidar_scale)  + lidar_offset
 
         # df = df[np.argsort(df[:,2], kind="stable")[::-1]]

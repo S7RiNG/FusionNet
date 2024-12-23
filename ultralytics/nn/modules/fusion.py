@@ -1,3 +1,4 @@
+import numpy as np
 import torch.nn as nn
 import torch
 import math
@@ -295,30 +296,57 @@ class FusionExtend1d(nn.Module):
         y2 = self.act(self.cv3(x))
         return self.bn1(torch.cat([y1, y2], 1))
 
-class FusionPointAttenetion(nn.Module):
-    def __init__(self, d_model, size, n_head=1, dropout=0):
+class FusionLidarAttenetionInStage(nn.Module):
+    def __init__(self, d_model, n_head=1, dropout=0):
         super().__init__()
         self.pe2d = PositionalEncoding2D(d_model)
-        self.size = [*size, d_model]
-        self.fb = FuisonBlock_CSP(d_model, n_cat=1, n_head=n_head, dropout=dropout)
+        self.d_model = d_model
+        self.fb = FusionLidarAttenetion(d_model, n_head=n_head, dropout=dropout)
         # self.ma = nn.MultiheadAttention(d_model, num_heads=n_head, batch_first=True)
         # self.ln = nn.LayerNorm(d_model)
         
         
-    def forward(self, x:torch.Tensor):
+    def forward(self, x:torch.Tensor, size):
         b = x.shape[0]
-        shape = (b, *self.size)
+        shape = (b, *size, self.d_model)
         quray = torch.Tensor(self.pe2d(torch.zeros(shape, device=x.device, dtype=x.dtype))).flatten(1,2)
-        return self.fb(quray, x)
+        return self.fb(quray, x, size)
         # attn = self.ma(quray, x, x)[0] + quray
         # return self.ln(attn)
 
+class FusionLidarAttenetion(nn.Module):
+    def __init__(self, d_model, d_kv=None, n_head=1, dropout=0):
+        super().__init__()
+
+        d_kv = d_model if d_kv is None else d_kv
+
+        self.ma_fa = nn.MultiheadAttention(d_model, n_head, batch_first=True, kdim=d_kv, vdim=d_kv, dropout=dropout)
+        self.ln_fa = nn.LayerNorm(d_model)
+
+        self.ma_sa = nn.MultiheadAttention(d_model, n_head, batch_first=True, dropout=dropout)
+        self.ln_sa = nn.LayerNorm(d_model)
+
+        self.csp = C2f(d_model, d_model)
+
+    def forward(self, data_q, data_kv, size):
+        # fusion attention
+        fusion_attn = self.ma_fa(data_q, data_kv,data_kv)[0] + data_q
+        out_fa = self.ln_fa(fusion_attn)
+
+        self_attn = self.ma_sa(out_fa, out_fa, out_fa)[0] + out_fa
+        out_sa = self.ln_fa(self_attn)
+        
+        out_sa = out_sa.permute(0, 2, 1)
+        out_uf = out_sa.unflatten(-1, size)
+        out_csp = self.csp(out_uf)
+        out = out_csp.flatten(2, -1)
+        return out.permute(0, 2, 1)
     
 class FusionImageLidar(nn.Module):
     def __init__(self, d_img, d_ldr, repeat=1, n_head=1, dropout=0):
         super().__init__()
 
-        self.pa = FusionPointAttenetion(d_ldr, [20, 20], n_head=n_head, dropout=dropout)
+        self.pa = FusionLidarAttenetionInStage(d_ldr, [20, 20], n_head=n_head, dropout=dropout)
 
         self.seq_img = nn.Sequential()
         self.seq_ldr = nn.Sequential()
@@ -345,28 +373,28 @@ class FusionImageLidar(nn.Module):
         return data
 
 class FusionLidar(nn.Module):
-    def __init__(self, c1, c2, repeat=1, n_head=1, dropout=0):
+    def __init__(self, c1, c2, repeat=1, n_head=1, dropout=0, stride=1):
         super().__init__()
-
-        self.pa = FusionPointAttenetion(c1, [20, 20], n_head=n_head, dropout=dropout)
+        self.stride = stride
+        self.pa = FusionLidarAttenetionInStage(c1, n_head=n_head, dropout=dropout)
 
         self.seq = nn.Sequential()
 
         for _ in range(repeat):
-            self.seq.append(FuisonBlock_CSP(c1, c1, n_head=n_head, dropout=dropout, n_cat=1))
+            self.seq.append(FusionLidarAttenetion(c1, c1, n_head=n_head, dropout=dropout))
 
         self.sppf = SPPF(c1, c2)
         
-    def forward(self, x):# data: batch, d_model, n
+    def forward(self, x, rgbsize):# data: batch, d_model, n
+        
+        size = [side // self.stride for side in rgbsize]
         data = x.permute(0, 2, 1)
-
-        out = self.pa(data)
+        out = self.pa(data, size)
         
         for layer in self.seq:
-            out = layer(out, data)
+            out = layer(out, data, size)
         
         out = out.permute(0, 2, 1)
-        side = int(math.sqrt(out.shape[-1]))
-        out = out.unflatten(-1, (side, side))
+        out = out.unflatten(-1, size)
         out = self.sppf(out)
         return out
