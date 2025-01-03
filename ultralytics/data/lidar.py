@@ -1,12 +1,12 @@
 from pathlib import Path
-
+import random
 from PIL import Image
 import numpy as np
 import torch
 from torch import Tensor
 from torchvision.transforms import functional as f
 import cv2
-from .augment import LetterBox
+from .augment import LetterBox, Mosaic
 
 def read_lidarmap(path) -> Tensor:
     return cv2.imread(str(path))
@@ -211,3 +211,57 @@ class LiDARAug():
         df = df.T
         df = torch.from_numpy(df)
 
+class Mosic_Lidar(Mosaic):
+    def _mosaic4(self, labels):
+        mosaic_labels = []
+        s = self.imgsz
+        yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.border)  # mosaic center x, y
+        for i in range(4):
+            labels_patch = labels if i == 0 else labels["mix_labels"][i - 1]
+            # Load image
+            img = labels_patch["img"]
+            df = labels_patch["df"]
+            h, w = labels_patch.pop("resized_shape")
+
+            # Place img in img4
+            if i == 0:  # top left
+                img4 = np.full((s * 2, s * 2, img.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
+                x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
+                df4 = []
+            elif i == 1:  # top right
+                x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
+                x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
+            elif i == 2:  # bottom left
+                x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
+            elif i == 3:  # bottom right
+                x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
+                x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+
+            img4[y1a:y2a, x1a:x2a] = img[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
+            padw = x1a - x1b
+            padh = y1a - y1b
+
+            df_ymin = y1b/h
+            df_ymax = y2b/h
+            df_xmin = x1b/w
+            df_xmax = x2b/w
+
+            df_xscale = ((x2a - x1a) / (s * 2)) / ((x2b - x1b) / w)
+            df_yscale = ((y2a - y1a) / (s * 2)) / ((y2b - y1b) / w)
+
+            df_xoffset = x1a - x2a * df_xscale
+            df_yoffset = y1a - y2a * df_yscale
+
+            df_append = df[np.where(df[0,:] > df_xmin and df[0,:] < df_xmax and df[1,:] > df_ymin and df[1,:] < df_ymax)]
+            df_append[0, :] = df_append[0, :] * df_xscale + df_xoffset
+            df_append[1, :] = df_append[1, :] * df_yscale + df_yoffset
+
+            df4.append(df_append)
+
+            labels_patch = self._update_labels(labels_patch, padw, padh)
+            mosaic_labels.append(labels_patch)
+        final_labels = self._cat_labels(mosaic_labels)
+        final_labels["img"] = img4
+        return final_labels
