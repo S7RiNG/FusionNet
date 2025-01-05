@@ -6,7 +6,10 @@ import torch
 from torch import Tensor
 from torchvision.transforms import functional as f
 import cv2
-from .augment import LetterBox, Mosaic
+
+from ultralytics.utils import LOGGER
+
+from .augment import Compose, CopyPaste, LetterBox, Mosaic, RandomFlip, RandomHSV, RandomPerspective, Albumentations
 
 def read_lidarmap(path) -> Tensor:
     return cv2.imread(str(path))
@@ -211,7 +214,32 @@ class LiDARAug():
         df = df.T
         df = torch.from_numpy(df)
 
-class Mosic_Lidar(Mosaic):
+class Mosic_LiDAR(Mosaic):
+    def __init__(self, dataset, imgsz=640, p=1.0, n=4, pre_transform=None):
+        """
+        Initializes the Mosaic augmentation object.
+
+        This class performs mosaic augmentation by combining multiple (4 or 9) images into a single mosaic image.
+        The augmentation is applied to a dataset with a given probability.
+
+        Args:
+            dataset (Any): The dataset on which the mosaic augmentation is applied.
+            imgsz (int): Image size (height and width) after mosaic pipeline of a single image.
+            p (float): Probability of applying the mosaic augmentation. Must be in the range 0-1.
+            n (int): The grid size, either 4 (for 2x2) or 9 (for 3x3).
+
+        Examples:
+            >>> from ultralytics.data.augment import Mosaic
+            >>> dataset = YourDataset(...)
+            >>> mosaic_aug = Mosaic(dataset, imgsz=640, p=0.5, n=4)
+        """
+        assert 0 <= p <= 1.0, f"The probability should be in range [0, 1], but got {p}."
+        assert n in {4, 9}, "grid must be equal to 4 or 9."
+        super(Mosaic, self).__init__(dataset=dataset, pre_transform=pre_transform, p=p)
+        self.imgsz = imgsz
+        self.border = (-imgsz // 2, -imgsz // 2)  # width, height
+        self.n = n
+
     def _mosaic4(self, labels):
         mosaic_labels = []
         s = self.imgsz
@@ -248,20 +276,201 @@ class Mosic_Lidar(Mosaic):
             df_xmin = x1b/w
             df_xmax = x2b/w
 
+            dft = df.T
+            lim1 = dft[0] > df_xmin
+            lim2 = dft[0] < df_xmax
+            lim3 = dft[1] > df_ymin
+            lim4 = dft[1] < df_ymax
+            limx = np.logical_and(lim1, lim2)
+            limy = np.logical_and(lim3, lim4)
+            lim = np.logical_and(limx, limy)
+
             df_xscale = ((x2a - x1a) / (s * 2)) / ((x2b - x1b) / w)
-            df_yscale = ((y2a - y1a) / (s * 2)) / ((y2b - y1b) / w)
+            df_yscale = ((y2a - y1a) / (s * 2)) / ((y2b - y1b) / h)
 
-            df_xoffset = x1a - x2a * df_xscale
-            df_yoffset = y1a - y2a * df_yscale
+            df_xoffset = (x1a / (s * 2) - (x1b / w) * df_xscale)
+            df_yoffset = (y1a / (s * 2) - (y1b / w) * df_yscale)
 
-            df_append = df[np.where(df[0,:] > df_xmin and df[0,:] < df_xmax and df[1,:] > df_ymin and df[1,:] < df_ymax)]
-            df_append[0, :] = df_append[0, :] * df_xscale + df_xoffset
-            df_append[1, :] = df_append[1, :] * df_yscale + df_yoffset
+            df_append = df[np.where(lim)]
+            df_append[:, 0] = df_append[:, 0] * df_xscale + df_xoffset
+            df_append[:, 1] = df_append[:, 1] * df_yscale + df_yoffset
 
             df4.append(df_append)
-
             labels_patch = self._update_labels(labels_patch, padw, padh)
             mosaic_labels.append(labels_patch)
         final_labels = self._cat_labels(mosaic_labels)
         final_labels["img"] = img4
+        df4 = np.concatenate(df4, axis=0).T
+        final_labels["df"] = df4
+
+        if False:
+            from matplotlib import pyplot as PLT
+            pt_show = df4
+            shape_show = int(s * 2)
+            pt_show[0:2] = pt_show[0:2] * shape_show
+            u,v,z,i = pt_show
+            PLT.figure(figsize=(12,5),dpi=96,tight_layout=True)
+            PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2) #'rainbow_r'
+            PLT.axis([0,shape_show + 100,shape_show + 100,0])
+            PLT.imshow(img4)
+            PLT.show()
+
         return final_labels
+    
+class RandomPerspective_LiDAR(RandomPerspective):
+    def __call__(self, labels):
+        """
+        Applies random perspective and affine transformations to an image and its associated labels.
+
+        This method performs a series of transformations including rotation, translation, scaling, shearing,
+        and perspective distortion on the input image and adjusts the corresponding bounding boxes, segments,
+        and keypoints accordingly.
+
+        Args:
+            labels (Dict): A dictionary containing image data and annotations.
+                Must include:
+                    'img' (ndarray): The input image.
+                    'cls' (ndarray): Class labels.
+                    'instances' (Instances): Object instances with bounding boxes, segments, and keypoints.
+                May include:
+                    'mosaic_border' (Tuple[int, int]): Border size for mosaic augmentation.
+
+        Returns:
+            (Dict): Transformed labels dictionary containing:
+                - 'img' (np.ndarray): The transformed image.
+                - 'cls' (np.ndarray): Updated class labels.
+                - 'instances' (Instances): Updated object instances.
+                - 'resized_shape' (Tuple[int, int]): New image shape after transformation.
+
+        Examples:
+            >>> transform = RandomPerspective()
+            >>> image = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
+            >>> labels = {
+            ...     "img": image,
+            ...     "cls": np.array([0, 1, 2]),
+            ...     "instances": Instances(bboxes=np.array([[10, 10, 50, 50], [100, 100, 150, 150]])),
+            ... }
+            >>> result = transform(labels)
+            >>> assert result["img"].shape[:2] == result["resized_shape"]
+        """
+        if self.pre_transform and "mosaic_border" not in labels:
+            labels = self.pre_transform(labels)
+        labels.pop("ratio_pad", None)  # do not need ratio pad
+
+        img = labels["img"]
+        cls = labels["cls"]
+        df = labels["df"]
+        instances = labels.pop("instances")
+        # Make sure the coord formats are right
+        instances.convert_bbox(format="xyxy")
+        instances.denormalize(*img.shape[:2][::-1])
+
+        border = labels.pop("mosaic_border", self.border)
+        self.size = img.shape[1] + border[1] * 2, img.shape[0] + border[0] * 2  # w, h
+        # M is affine matrix
+        # Scale for func:`box_candidates`
+        img, M, scale = self.affine_transform(img, border)
+        df = self.apply_lidar(M, df)
+
+        bboxes = self.apply_bboxes(instances.bboxes, M)
+
+        segments = instances.segments
+        keypoints = instances.keypoints
+        # Update bboxes if there are segments.
+        if len(segments):
+            bboxes, segments = self.apply_segments(segments, M)
+
+        if keypoints is not None:
+            keypoints = self.apply_keypoints(keypoints, M)
+        new_instances = Instances(bboxes, segments, keypoints, bbox_format="xyxy", normalized=False)
+        # Clip
+        new_instances.clip(*self.size)
+
+        # Filter instances
+        instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
+        # Make the bboxes have the same scale with new_bboxes
+        i = self.box_candidates(
+            box1=instances.bboxes.T, box2=new_instances.bboxes.T, area_thr=0.01 if len(segments) else 0.10
+        )
+        labels["instances"] = new_instances[i]
+        labels["cls"] = cls[i]
+        labels["img"] = img
+        labels["resized_shape"] = img.shape[:2]
+        return labels
+    
+    def apply_lidar(self, M, df:Tensor):
+        dft = np.ones([df.shape[0], 3])
+        dft[:, :2] = df[:, :2]
+        dft = dft @ M.T
+        dft = (dft[:, :2] / dft[:, 2:3] if self.perspective else dft[:, :2])
+        dft[:, 2:3] = df[:, 2:3]
+        return dft
+        
+
+
+
+def LiDAR_transforms(dataset, imgsz, hyp, stretch=False):
+    """
+    Applies a series of image transformations for training.
+
+    This function creates a composition of image augmentation techniques to prepare images for YOLO training.
+    It includes operations such as mosaic, copy-paste, random perspective, mixup, and various color adjustments.
+
+    Args:
+        dataset (Dataset): The dataset object containing image data and annotations.
+        imgsz (int): The target image size for resizing.
+        hyp (Namespace): A dictionary of hyperparameters controlling various aspects of the transformations.
+        stretch (bool): If True, applies stretching to the image. If False, uses LetterBox resizing.
+
+    Returns:
+        (Compose): A composition of image transformations to be applied to the dataset.
+
+    Examples:
+        >>> from ultralytics.data.dataset import YOLODataset
+        >>> from ultralytics.utils import IterableSimpleNamespace
+        >>> dataset = YOLODataset(img_path="path/to/images", imgsz=640)
+        >>> hyp = IterableSimpleNamespace(mosaic=1.0, copy_paste=0.5, degrees=10.0, translate=0.2, scale=0.9)
+        >>> transforms = v8_transforms(dataset, imgsz=640, hyp=hyp)
+        >>> augmented_data = transforms(dataset[0])
+    """
+    mosaic = Mosic_LiDAR(dataset, imgsz=imgsz, p=hyp.mosaic, pre_transform=LiDAR_norm())
+    affine = RandomPerspective_LiDAR(
+        degrees=hyp.degrees,
+        translate=hyp.translate,
+        scale=hyp.scale,
+        shear=hyp.shear,
+        perspective=hyp.perspective,
+        pre_transform=None if stretch else LetterBox(new_shape=(imgsz, imgsz)),
+    )
+
+    pre_transform = Compose([LiDAR_norm(), mosaic, affine])
+    if hyp.copy_paste_mode == "flip":
+        pre_transform.insert(1, CopyPaste(p=hyp.copy_paste, mode=hyp.copy_paste_mode))
+    else:
+        pre_transform.append(
+            CopyPaste(
+                dataset,
+                pre_transform=Compose([LiDAR_norm(), Mosic_LiDAR(dataset, imgsz=imgsz, p=hyp.mosaic, pre_transform=LiDAR_norm()), affine]),
+                p=hyp.copy_paste,
+                mode=hyp.copy_paste_mode,
+            )
+        )
+    flip_idx = dataset.data.get("flip_idx", [])  # for keypoints augmentation
+    if dataset.use_keypoints:
+        kpt_shape = dataset.data.get("kpt_shape", None)
+        if len(flip_idx) == 0 and hyp.fliplr > 0.0:
+            hyp.fliplr = 0.0
+            LOGGER.warning("WARNING ⚠️ No 'flip_idx' array defined in data.yaml, setting augmentation 'fliplr=0.0'")
+        elif flip_idx and (len(flip_idx) != kpt_shape[0]):
+            raise ValueError(f"data.yaml flip_idx={flip_idx} length must be equal to kpt_shape[0]={kpt_shape[0]}")
+
+    return Compose(
+        [
+            pre_transform,
+            # MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
+            Albumentations(p=1.0),
+            RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
+            RandomFlip(direction="vertical", p=hyp.flipud),
+            RandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
+        ]
+    )  # transforms

@@ -277,7 +277,7 @@ class YOLOMultiModalDataset(YOLODataset):
             transforms.insert(-1, RandomLoadText(max_samples=min(self.data["nc"], 80), padding=True))
         return transforms
 
-from .lidar import read_combo
+from .lidar import read_combo, LiDAR_transforms
 import math
 from copy import deepcopy 
 from ultralytics.utils import DEFAULT_CFG
@@ -393,6 +393,15 @@ class FusionDataset(YOLODataset):
                 df[0] = df[0] * (w / self.imgsz)
                 df[1] = df[1] * (h / self.imgsz)
 
+                        # Add to buffer if training with augmentations
+            if self.augment:
+                self.ims[i], self.im_hw0[i], self.im_hw[i], self.dfs[i] = im, (h0, w0), im.shape[:2], df  # im, hw_original, hw_resized
+                self.buffer.append(i)
+                if 1 < len(self.buffer) >= self.max_buffer_length:  # prevent empty buffer
+                    j = self.buffer.pop(0)
+                    if self.cache != "ram":
+                        self.ims[j], self.im_hw0[j], self.im_hw[j], self.dfs[j] = None, None, None, None
+
             return im, (h0, w0), im.shape[:2], df
 
         return self.ims[i], self.im_hw0[i], self.im_hw[i], self.dfs[i]
@@ -422,7 +431,12 @@ class FusionDataset(YOLODataset):
     
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
-        transforms = Compose([LiDAR_norm(), LetterBox_LiDAR(new_shape=(self.imgsz, self.imgsz), scaleup=False, mode=self.mode)])
+        if self.augment:
+            hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
+            hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
+            transforms = LiDAR_transforms(self, self.imgsz, hyp)
+        else:
+            transforms = Compose([LiDAR_norm(), LetterBox_LiDAR(new_shape=(self.imgsz, self.imgsz), scaleup=False, mode=self.mode)])
         transforms.append(
             Format(
                 bbox_format="xywh",

@@ -108,7 +108,7 @@ def build_fusion_dataset(cfg, img_path, batch, data, mode="train", rect=False, s
         img_path=img_path,
         imgsz=cfg.imgsz,
         batch_size=batch,
-        augment=False,
+        augment=True,
         hyp=cfg,  # TODO: probably add a get_hyps_from_cfg function
         rect=cfg.rect or rect,  # rectangular batches
         cache=cfg.cache or None,
