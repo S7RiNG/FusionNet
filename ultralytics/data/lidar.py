@@ -8,8 +8,8 @@ from torchvision.transforms import functional as f
 import cv2
 
 from ultralytics.utils import LOGGER
-
-from .augment import Compose, CopyPaste, LetterBox, Mosaic, RandomFlip, RandomHSV, RandomPerspective, Albumentations
+from ultralytics.utils.instance import Instances
+from ultralytics.data.augment import Compose, CopyPaste, LetterBox, Mosaic, RandomFlip, RandomHSV, RandomPerspective, Albumentations
 
 def read_lidarmap(path) -> Tensor:
     return cv2.imread(str(path))
@@ -41,6 +41,7 @@ class LiDAR_norm:
         df[:,0] = df[:,0]/w
         df[:,1] = df[:,1]/h
         df[:,2:4] = df[:,2:4]/255
+        df = torch.from_numpy(df)
 
         if len(labels):
             labels["df"] = df
@@ -48,9 +49,51 @@ class LiDAR_norm:
         else:
             return df
 
+import traceback
+class Process_LiDAR:
+    def __init__(self, lenmax=28000, mode:str='train'):
+        self.lenmax = lenmax
+        self.mode = mode
+
+    def __call__(self, labels=None, df=None):
+        df = labels.get("df") if df is None else df
+        df = df.T
+
+        #shuffle
+        np.random.shuffle(df)
+        
+        #limit length
+        len_max = self.lenmax
+        len_df = df.shape[1]
+        len_zero = len_max - len_df
+        if df.shape[0] == 4:
+            print("df.shape", df.shape)
+            traceback.print_stack()
+        
+        if len_zero > 0:
+            zeros = np.zeros([len_zero, 4], dtype=df.dtype)
+
+            df = np.concatenate([df[:len_df], zeros], 0)
+        else:
+            if self.mode == "val":
+                print('!!! LiDAR points exceed', len_max)
+            df = df[:len_max]
+        
+        #add noise
+        if self.mode == "train":
+            noise = np.random.normal(0, 0.005, df.shape)
+            df += noise
+        
+        df = df.T
+        df = torch.from_numpy(df)
+        if labels is None:
+            return df
+        else:
+            labels["df"] = df
+            return labels
 
 class LetterBox_LiDAR(LetterBox):
-    def __init__(self, new_shape=(640, 640), auto=False, scaleFill=False, scaleup=True, center=True, stride=32, mode:bool='train'):
+    def __init__(self, new_shape=(640, 640), auto=False, scaleFill=False, scaleup=True, center=True, stride=32, mode:str='train'):
         super().__init__(new_shape, auto, scaleFill, scaleup, center, stride)
         self.mode = mode
 
@@ -183,36 +226,6 @@ class LetterBox_LiDAR(LetterBox):
             return labels
         else:
             return img, df
-        
-class LiDARAug():
-    def __init__(self, mode='train', len_max=28000, randomchoice=0.8):
-        self.mode = mode
-
-    def __call__(self, labels=None, df=None, ):
-        if labels is None:
-            labels = {}
-        df = labels.get("df") if df is None else df
-
-        np.random.shuffle(df)
-        
-        len_max = 28000
-        len_df = df.shape[0]
-        len_zero = len_max - len_df
-
-        
-        if len_zero > 0:
-            zeros = np.zeros([len_zero, 4], dtype=df.dtype)
-            df = np.concatenate([df[:len_df], zeros], 0)
-        else:
-            print('!!! LiDAR points exceed', len_max)
-            df = df[:len_max]
-        
-        if self.mode == "train":
-            noise = np.random.normal(0, 0.005, df.shape)
-            df += noise
-        
-        df = df.T
-        df = torch.from_numpy(df)
 
 class Mosic_LiDAR(Mosaic):
     def __init__(self, dataset, imgsz=640, p=1.0, n=4, pre_transform=None):
@@ -360,18 +373,18 @@ class RandomPerspective_LiDAR(RandomPerspective):
         img = labels["img"]
         cls = labels["cls"]
         df = labels["df"]
+        shape_in = img.shape[:2][::-1]
         instances = labels.pop("instances")
         # Make sure the coord formats are right
         instances.convert_bbox(format="xyxy")
-        instances.denormalize(*img.shape[:2][::-1])
+        instances.denormalize(*shape_in)
 
         border = labels.pop("mosaic_border", self.border)
         self.size = img.shape[1] + border[1] * 2, img.shape[0] + border[0] * 2  # w, h
         # M is affine matrix
         # Scale for func:`box_candidates`
         img, M, scale = self.affine_transform(img, border)
-        df = self.apply_lidar(M, df)
-
+        df = self.apply_lidar(M, df, shape_in, img.shape[:2][::-1])
         bboxes = self.apply_bboxes(instances.bboxes, M)
 
         segments = instances.segments
@@ -396,18 +409,87 @@ class RandomPerspective_LiDAR(RandomPerspective):
         labels["cls"] = cls[i]
         labels["img"] = img
         labels["resized_shape"] = img.shape[:2]
+        labels["df"] = df
+
+        if False:
+            from matplotlib import pyplot as PLT
+            pt_show = df
+            shape_show = 640
+            pt_show[0:2] = pt_show[0:2] * shape_show
+            u,v,z,i = pt_show
+            PLT.figure(figsize=(12,5),dpi=96,tight_layout=True)
+            PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2) #'rainbow_r'
+            PLT.axis([0, shape_show, shape_show,0])
+            PLT.imshow(img)
+            PLT.show()
+            while True: pass
         return labels
     
-    def apply_lidar(self, M, df:Tensor):
-        dft = np.ones([df.shape[0], 3])
-        dft[:, :2] = df[:, :2]
-        dft = dft @ M.T
-        dft = (dft[:, :2] / dft[:, 2:3] if self.perspective else dft[:, :2])
-        dft[:, 2:3] = df[:, 2:3]
-        return dft
+    def apply_lidar(self, M:np.matrix, df:np.matrix, shape, shape_out):
+        # denorm
+        denorm = np.array(shape).reshape([-1, 2])
+        norm = np.array(shape_out).reshape([-1, 2])
+        dft = df.T
+        xy = np.ones([dft.shape[0], 3])
+        xy[:, :2] = dft[:, :2] * denorm
+        xy = xy @ M.T
+        xy[:, :2] = (xy[:, :2] / xy[:, 2:3] if self.perspective else xy[:, :2])
+        xy[:, :2] = xy[:, :2] / norm
+        df_affine = np.empty(np.shape(df))
+        df_affine[:2] = xy.T[:2]
+        df_affine[2:] = df[2:]
+        return df_affine
         
+class RandomFlip_LiDAR(RandomFlip):
+    def __call__(self, labels):
+        """
+        Applies random flip to an image and updates any instances like bounding boxes or keypoints accordingly.
 
+        This method randomly flips the input image either horizontally or vertically based on the initialized
+        probability and direction. It also updates the corresponding instances (bounding boxes, keypoints) to
+        match the flipped image.
 
+        Args:
+            labels (Dict): A dictionary containing the following keys:
+                'img' (numpy.ndarray): The image to be flipped.
+                'instances' (ultralytics.utils.instance.Instances): An object containing bounding boxes and
+                    optionally keypoints.
+
+        Returns:
+            (Dict): The same dictionary with the flipped image and updated instances:
+                'img' (numpy.ndarray): The flipped image.
+                'instances' (ultralytics.utils.instance.Instances): Updated instances matching the flipped image.
+
+        Examples:
+            >>> labels = {"img": np.random.rand(640, 640, 3), "instances": Instances(...)}
+            >>> random_flip = RandomFlip(p=0.5, direction="horizontal")
+            >>> flipped_labels = random_flip(labels)
+        """
+        img = labels["img"]
+        df = labels["df"]
+        instances = labels.pop("instances")
+        instances.convert_bbox(format="xywh")
+        h, w = img.shape[:2]
+        h = 1 if instances.normalized else h
+        w = 1 if instances.normalized else w
+
+        # Flip up-down
+        if self.direction == "vertical" and random.random() < self.p:
+            img = np.flipud(img)
+            instances.flipud(h)
+            df[1] = 1 - df[1]
+        if self.direction == "horizontal" and random.random() < self.p:
+            img = np.fliplr(img)
+            instances.fliplr(w)
+            df[0] = 1 - df[0]
+            # For keypoints
+            if self.flip_idx is not None and instances.keypoints is not None:
+                instances.keypoints = np.ascontiguousarray(instances.keypoints[:, self.flip_idx, :])
+        labels["img"] = np.ascontiguousarray(img)
+        labels["instances"] = instances
+        labels["df"] = df
+
+        return labels
 
 def LiDAR_transforms(dataset, imgsz, hyp, stretch=False):
     """
@@ -440,7 +522,7 @@ def LiDAR_transforms(dataset, imgsz, hyp, stretch=False):
         scale=hyp.scale,
         shear=hyp.shear,
         perspective=hyp.perspective,
-        pre_transform=None if stretch else LetterBox(new_shape=(imgsz, imgsz)),
+        pre_transform=None if stretch else LetterBox_LiDAR(new_shape=(imgsz, imgsz)),
     )
 
     pre_transform = Compose([LiDAR_norm(), mosaic, affine])
@@ -470,7 +552,8 @@ def LiDAR_transforms(dataset, imgsz, hyp, stretch=False):
             # MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
             Albumentations(p=1.0),
             RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
-            RandomFlip(direction="vertical", p=hyp.flipud),
-            RandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
+            RandomFlip_LiDAR(direction="vertical", p=hyp.flipud),
+            RandomFlip_LiDAR(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
+            Process_LiDAR(),
         ]
     )  # transforms

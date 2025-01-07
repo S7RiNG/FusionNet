@@ -24,8 +24,8 @@ if __name__ == "__main__":
     # Train
     # model = FusionNet('ultralytics/cfg/models/fusion/yolov8m-fusion.yaml', verbose=True)
     # model = YOLO('ultralytics/cfg/models/v8/yolov8m.yaml', verbose=True)
-    # model = FusionNet(r'E:\Work\stu\FusionNet\ultralytics\cfg\models\fusion\yolov8-fusion_5.yaml', verbose=True)
-    model = FusionNet('/Users/harrier/Work/stu/FusionNet/ultralytics/cfg/models/fusion/yolov8-fusion_5.yaml', verbose=True)
+    model = FusionNet(r'E:\Work\stu\FusionNet\ultralytics\cfg\models\fusion\yolov8-fusion_5.yaml', verbose=True)
+    # model = FusionNet('/Users/harrier/Work/stu/FusionNet/ultralytics/cfg/models/fusion/yolov8-fusion_5.yaml', verbose=True)
     # torchinfo.summary(model)
 
     res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=8)
@@ -74,4 +74,3 @@ if __name__ == "__main__":
     # batch = torch.ones((3,12,12,6))
     # imgs = torch.split(batch, 3, -1)
     # print(imgs.shape)
-

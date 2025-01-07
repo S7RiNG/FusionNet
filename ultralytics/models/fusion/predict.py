@@ -20,5 +20,6 @@ class FusionNetPredictor(DetectionPredictor):
             self.imgsz,
             auto=same_shapes and (self.model.pt or getattr(self.model, "dynamic", False)),
             stride=self.model.stride,
+            mode='val'
         )
         return [letterbox(image=x) for x in im]
