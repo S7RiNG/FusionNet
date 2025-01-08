@@ -58,31 +58,32 @@ class Process_LiDAR:
     def __call__(self, labels=None, df=None):
         df = labels.get("df") if df is None else df
         df = df.T
-
-        #shuffle
-        np.random.shuffle(df)
-        
-        #limit length
-        len_max = self.lenmax
-        len_df = df.shape[1]
-        len_zero = len_max - len_df
         if df.shape[0] == 4:
             print("df.shape", df.shape)
             traceback.print_stack()
-        
-        if len_zero > 0:
-            zeros = np.zeros([len_zero, 4], dtype=df.dtype)
 
-            df = np.concatenate([df[:len_df], zeros], 0)
-        else:
-            if self.mode == "val":
-                print('!!! LiDAR points exceed', len_max)
-            df = df[:len_max]
-        
         #add noise
         if self.mode == "train":
             noise = np.random.normal(0, 0.005, df.shape)
             df += noise
+        
+        #shuffle
+        np.random.shuffle(df)
+
+        #limit length
+        len_max = self.lenmax
+        len_df = df.shape[0]
+        len_zero = len_max - len_df
+        
+        if len_zero <= 0:
+            if self.mode == "val":
+                print('!!! LiDAR points exceed', len_max)
+                df = df[:len_max]
+            len_zero = np.random.randint(1000, 2000)
+            len_df = len_max - len_zero
+        
+        zeros = np.zeros([len_zero, 4], dtype=df.dtype)
+        df = np.concatenate([df[:len_df], zeros], 0)
         
         df = df.T
         df = torch.from_numpy(df)
@@ -95,7 +96,7 @@ class Process_LiDAR:
 class LetterBox_LiDAR(LetterBox):
     def __init__(self, new_shape=(640, 640), auto=False, scaleFill=False, scaleup=True, center=True, stride=32, mode:str='train'):
         super().__init__(new_shape, auto, scaleFill, scaleup, center, stride)
-        self.mode = mode
+        self.mode = mode if mode=='train' else 'val'
 
     def __call__(self, labels=None, image=None, df=None):
         """
@@ -121,6 +122,7 @@ class LetterBox_LiDAR(LetterBox):
         """
         if labels is None:
             labels = {}
+        
         img = labels.get("img") if image is None else image
         df = labels.get("df") if df is None else df
         shape = img.shape[:2]  # current shape [height, width]
@@ -182,21 +184,16 @@ class LetterBox_LiDAR(LetterBox):
         # df = df[np.argsort(df[:,2], kind="stable")[::-1]]
         np.random.shuffle(df)
         
-        len_max = 28000
-        len_df = df.shape[0]
-        len_zero = len_max - len_df
-
-        
-        if len_zero > 0:
-            zeros = np.zeros([len_zero, 4], dtype=df.dtype)
-            df = np.concatenate([df[:len_df], zeros], 0)
-        else:
-            print('!!! LiDAR points exceed', len_max)
-            df = df[:len_max]
-        
-        if self.mode == "train":
-            noise = np.random.normal(0, 0.005, df.shape)
-            df += noise
+        if self.mode == "val":
+            len_max = 28000
+            len_df = df.shape[0]
+            len_zero = len_max - len_df 
+            if len_zero > 0:
+                zeros = np.zeros([len_zero, 4], dtype=df.dtype)
+                df = np.concatenate([df[:len_df], zeros], 0)
+            else:
+                LOGGER('!!! LiDAR points exceed', len_max)
+                df = df[:len_max]
         
         df = df.T
         df = torch.from_numpy(df)
