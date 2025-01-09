@@ -24,11 +24,11 @@ class FusionNetTrainer(DetectionTrainer):
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
         gs = max(int(de_parallel(self.model).stride.max() if self.model else 0), 32)
-        return build_fusion_dataset(self.args, img_path, batch, self.data, mode=mode, stride=gs, rect=mode == "val")
+        return build_fusion_dataset(self.args, img_path, batch, self.data, mode=mode, stride=gs, rect=False)
 
     def preprocess_batch(self, batch):
         """Add data of fusion : 'dfs' """
-        batch['df'] = batch['df'].to(self.device, non_blocking=True).float()
+        batch['df'] = batch['df'].float().to(self.device, non_blocking=True)
         return super().preprocess_batch(batch)
     
     def get_model(self, cfg=None, weights=None, verbose=True):

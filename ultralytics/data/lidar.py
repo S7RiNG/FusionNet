@@ -86,7 +86,23 @@ class Process_LiDAR:
         df = np.concatenate([df[:len_df], zeros], 0)
         
         df = df.T
+        
+
+        if False:
+            from matplotlib import pyplot as PLT
+            pt_show = df
+            shape_show = 640
+            pt_show[0:2] = pt_show[0:2] * shape_show
+            u,v,z,i = pt_show
+            PLT.figure(figsize=(12,5),dpi=96,tight_layout=True)
+            PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2) #'rainbow_r'
+            PLT.axis([0,shape_show + 100,shape_show + 100,0])
+            PLT.imshow(labels['img'])
+            PLT.show()
+            while True: continue
+
         df = torch.from_numpy(df)
+
         if labels is None:
             return df
         else:
@@ -426,16 +442,27 @@ class RandomPerspective_LiDAR(RandomPerspective):
         # denorm
         denorm = np.array(shape).reshape([-1, 2])
         norm = np.array(shape_out).reshape([-1, 2])
-        dft = df.T
+        dft = df.T # n first
         xy = np.ones([dft.shape[0], 3])
         xy[:, :2] = dft[:, :2] * denorm
         xy = xy @ M.T
         xy[:, :2] = (xy[:, :2] / xy[:, 2:3] if self.perspective else xy[:, :2])
         xy[:, :2] = xy[:, :2] / norm
-        df_affine = np.empty(np.shape(df))
-        df_affine[:2] = xy.T[:2]
-        df_affine[2:] = df[2:]
-        return df_affine
+
+        dft_affine = np.empty(np.shape(dft))
+        dft_affine[:, :2] = xy[:, :2]
+        dft_affine[:, 2:] = dft[:, 2:]
+
+        lim1 = dft_affine.T[0] < 1
+        lim2 = dft_affine.T[0] > 0
+        lim3 = dft_affine.T[1] < 1
+        lim4 = dft_affine.T[1] > 0
+        limx = np.logical_and(lim1, lim2)
+        limy = np.logical_and(lim3, lim4)
+        lim = np.logical_and(limx, limy)
+
+        dft_affine = dft_affine[lim]
+        return dft_affine.T
         
 class RandomFlip_LiDAR(RandomFlip):
     def __call__(self, labels):
