@@ -25,7 +25,7 @@ if __name__ == "__main__":
     # model = FusionNet('ultralytics/cfg/models/fusion/yolov8m-fusion.yaml', verbose=True)
     # model = YOLO('ultralytics/cfg/models/v8/yolov8m.yaml', verbose=True)
     # model = FusionNet(r'E:\Work\stu\FusionNet\ultralytics\cfg\models\fusion\yolov8m-fusion_5.yaml', verbose=True)
-    model = FusionNet('/Users/harrier/Work/stu/FusionNet/ultralytics/cfg/models/fusion/yolov8s-fusion_5.yaml', verbose=True)
+    model = FusionNet('/Users/harrier/Work/stu/FusionNet/ultralytics/cfg/models/fusion/yolov8s-fusion_6.yaml', verbose=True)
     # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\fusion_aug1\weights\best.pt', verbose=True)
     # torchinfo.summary(model)
 

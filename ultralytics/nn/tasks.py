@@ -71,6 +71,7 @@ from ultralytics.nn.modules import (
     FusionExtend1d,
     FusionImageLidar,
     FusionLidar,
+    FusionLidar_Pyrmid,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -433,7 +434,7 @@ class FusionNetModel(DetectionModel):
         Returns:
             (torch.Tensor): The last output of the model.
         """
-        from ultralytics.nn.modules.fusion import FusionLidar
+        from ultralytics.nn.modules.fusion import FusionLidar, FusionLidar_Pyrmid
         x, df = x
         rgbshape = x.shape[-2:]
         y, dt, embeddings = [], [], []  # outputs
@@ -447,7 +448,7 @@ class FusionNetModel(DetectionModel):
                     x = [x if j == -1 else (y[j] if isinstance(j, int) else df) for j in m.f]  # from earlier layers
             if profile:
                 self._profile_one_layer(m, x, dt)
-            if isinstance(m, FusionLidar):
+            if isinstance(m, FusionLidar) or isinstance(m, FusionLidar_Pyrmid):
                 x = m(x, rgbshape)
             else:
                 x = m(x)  # run
@@ -1135,7 +1136,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             if m is FusionImageLidar:
                 args.insert(0, ch[f[1]])
             args.insert(0, c2)
-        elif m is FusionLidar:
+        elif m in [FusionLidar, FusionLidar_Pyrmid]:
             c2 = args[0]
             c2 = make_divisible(min(c2, max_channels) * width, 8)
             c1 = ch[f]

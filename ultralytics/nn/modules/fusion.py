@@ -398,3 +398,42 @@ class FusionLidar(nn.Module):
         out = out.unflatten(-1, size)
         out = self.sppf(out)
         return out
+    
+class FusionLidar_Pyrmid(FusionLidar):
+    def __init__(self, c1, c2, repeat=1, n_head=1, dropout=0, stride=1):
+        super(FusionLidar, self).__init__()
+        self.stride = stride
+        self.repeat = repeat
+        self.pa = FusionLidarAttenetionInStage(c1, n_head=n_head, dropout=dropout)
+
+        self.seq_fa = nn.Sequential()
+        self.seq_cv = nn.Sequential()
+
+        for _ in range(repeat):
+            self.seq_cv.append(nn.Conv2d(c1, c1, 3, 2, 1))
+            self.seq_fa.append(FusionLidarAttenetion(c1, c1, n_head=n_head, dropout=dropout))
+
+        self.sppf = SPPF(c1, c2)
+    
+    def forward(self, x, rgbsize):# data: batch, d_model, n
+        
+        size = [side // self.stride for side in rgbsize]
+        size_fa = [side * 2 ** self.repeat for side in size]
+        data = x.permute(0, 2, 1)
+        out = self.pa(data, size_fa)
+        
+        for cv, fa in zip(self.seq_cv, self.seq_fa):
+            out = out.permute(0, 2, 1)
+            out = out.unflatten(-1, size_fa)
+            out = cv(out)
+            out = out.flatten(2, -1)
+            out = out.permute(0, 2, 1)
+            size_fa = [side // 2 for side in size_fa]
+            out = fa(out, data, size_fa)
+            
+
+        
+        out = out.permute(0, 2, 1)
+        out = out.unflatten(-1, size)
+        out = self.sppf(out)
+        return out

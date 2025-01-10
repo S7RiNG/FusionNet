@@ -99,6 +99,7 @@ from .fusion import (
     FusionExtend1d,
     FusionImageLidar,
     FusionLidar,
+    FusionLidar_Pyrmid,
 )
 
 __all__ = (
