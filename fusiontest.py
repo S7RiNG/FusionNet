@@ -17,19 +17,19 @@ if __name__ == "__main__":
         data = r'/Users/harrier/Work/kitti/yolo_fusion/data.yaml'
         device = 'mps'
 
-    epochs = 150
+    epochs = 200
     batch = 2
     # time.sleep(3600)
     
     # Train
     # model = FusionNet('ultralytics/cfg/models/fusion/yolov8m-fusion.yaml', verbose=True)
     # model = YOLO('ultralytics/cfg/models/v8/yolov8m.yaml', verbose=True)
-    # model = FusionNet(r'E:\Work\stu\FusionNet\ultralytics\cfg\models\fusion\yolov8m-fusion_5.yaml', verbose=True)
-    model = FusionNet('/Users/harrier/Work/stu/FusionNet/ultralytics/cfg/models/fusion/yolov8s-fusion_6.yaml', verbose=True)
+    model = FusionNet(r'E:\Work\stu\FusionNet\ultralytics\cfg\models\fusion\yolov8m-fusion_6.yaml', verbose=True)
+    # model = FusionNet('/Users/harrier/Work/stu/FusionNet/ultralytics/cfg/models/fusion/yolov8s-fusion_6.yaml', verbose=True)
     # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\fusion_aug1\weights\best.pt', verbose=True)
     # torchinfo.summary(model)
 
-    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=2, close_mosaic=20)
+    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=8, close_mosaic=20)
 
     # res = model.val(data=data, device=device, batch=batch, cache='disk', workers=4)
 
