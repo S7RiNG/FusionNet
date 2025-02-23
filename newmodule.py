@@ -4,7 +4,7 @@ from positional_encodings.torch_encodings import PositionalEncoding2D
 
 
 class Lidar_group(nn.Module):
-    def __init__(self, shape, depth=9):
+    def __init__(self, shape, depth=8):
         super().__init__()
         self.shape = shape
         self.depth = depth
@@ -34,28 +34,36 @@ class Lidar_group(nn.Module):
                         break
                     else:
                         if d == self.depth - 1:
-                            print("warning: point out of stack.")
+                            print("warning: point out of stack at", x, y)
                         continue
-        group_stack = group.reshape(data.shape[0], self.shape, self.shape, -1)
+        group_stack = group.reshape(data.shape[0], self.shape, self.shape, -1).permute(0,3,1,2) #n, c, w, h
         return group_stack
 
 class Lidar_microattn(nn.Module):
     def __init__(self, d_model):
-        self.attn = nn.MultiheadAttention(d_model, 1, 0.1)
-        self.pos = PositionalEncoding2D(d_model)
         super().__init__()
+        self.attn = nn.MultiheadAttention(d_model, 1, 0.1, batch_first=True)
+        self.pos = PositionalEncoding2D(d_model)
+        
 
     def forward(self, rgb:torch.Tensor, pt_group:torch.Tensor):
-        assert(rgb.shape[:2] != pt_group.shape[:2])
+        assert(rgb.shape[:2] == pt_group.shape[:2])
         o = torch.zeros_like(rgb)
-        w, h = rgb.shape[:2]
+        w, h = rgb.shape[2:4]
+
         for x in range(w - 3):
             for y in range(h - 3):
-                d_rgb = rgb[x:x + 3, y:y + 3]
-                d_pt = pt_group[x:x + 3, y:y + 3]
-                d_rgb = d_rgb.reshape((3 * 3, -1))
-                d_pt = d_pt.reshape((3 * 3, -1))
+                d_rgb = rgb[:,:,x:x + 3, y:y + 3]
+                d_rgb += self.pos(d_rgb)
+                d_rgb = d_rgb.reshape(d_rgb.shape[0], d_rgb.shape[1], -1)
+                d_pt = pt_group[:,:,x:x + 3, y:y + 3]
+                d_pt += self.pos(d_pt)
+                d_pt = d_pt.reshape(d_pt.shape[0], d_pt.shape[1], -1)
+
+                # d_rgb = d_rgb.reshape((9, -1))
+                # d_pt = d_pt.reshape((9, -1))
                 o = self.attn(d_rgb, d_pt, d_pt)
+                print(o.shape)
 
         pass
 
@@ -68,10 +76,13 @@ data = [
     [0.21, 0.5, 4]
 ]
 
-test_pt = torch.rand((2, 100000, 4))
+test_pt = torch.rand((2, 1000, 4))
 test_rgb = torch.rand((2, 32, 64, 64))
 
 group = Lidar_group(64)
 grp = group.forward(test_pt)
 print(grp.shape)
+ma = Lidar_microattn(32)
+ma(test_rgb, grp)
+
 

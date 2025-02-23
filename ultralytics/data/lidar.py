@@ -49,7 +49,6 @@ class LiDAR_norm:
         else:
             return df
 
-import traceback
 class Process_LiDAR:
     def __init__(self, lenmax=28000, mode:str='train'):
         self.lenmax = lenmax
@@ -58,13 +57,10 @@ class Process_LiDAR:
     def __call__(self, labels=None, df=None):
         df = labels.get("df") if df is None else df
         df = df.T
-        if df.shape[0] == 4:
-            print("df.shape", df.shape)
-            traceback.print_stack()
 
         #add noise
         if self.mode == "train":
-            noise = np.random.normal(0, 0.005, df.shape)
+            noise = np.random.normal(0, 0.001, df.shape)
             df += noise
         
         #shuffle
@@ -88,7 +84,7 @@ class Process_LiDAR:
         df = df.T
         
 
-        if False:
+        if True:
             from matplotlib import pyplot as PLT
             pt_show = df
             shape_show = 640
@@ -96,7 +92,7 @@ class Process_LiDAR:
             u,v,z,i = pt_show
             PLT.figure(figsize=(12,5),dpi=96,tight_layout=True)
             PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2) #'rainbow_r'
-            PLT.axis([0,shape_show + 100,shape_show + 100,0])
+            PLT.axis([0,shape_show,shape_show,0])
             PLT.imshow(labels['img'])
             PLT.show()
             while True: continue
