@@ -84,7 +84,7 @@ class Process_LiDAR:
         df = df.T
         
 
-        if True:
+        if False:
             from matplotlib import pyplot as PLT
             pt_show = df
             shape_show = 640
@@ -97,7 +97,7 @@ class Process_LiDAR:
             PLT.show()
             while True: continue
 
-        df = torch.from_numpy(df)
+        
 
         if labels is None:
             return df
@@ -196,32 +196,31 @@ class LetterBox_LiDAR(LetterBox):
         # df = df[np.argsort(df[:,2], kind="stable")[::-1]]
         np.random.shuffle(df)
         
-        if self.mode == "val":
-            len_max = 28000
-            len_df = df.shape[0]
-            len_zero = len_max - len_df 
-            if len_zero > 0:
-                zeros = np.zeros([len_zero, 4], dtype=df.dtype)
-                df = np.concatenate([df[:len_df], zeros], 0)
-            else:
-                LOGGER('!!! LiDAR points exceed', len_max)
-                df = df[:len_max]
+        # if self.mode == "val":
+        #     len_max = 28000
+        #     len_df = df.shape[0]
+        #     len_zero = len_max - len_df 
+        #     if len_zero > 0:
+        #         zeros = np.zeros([len_zero, 4], dtype=df.dtype)
+        #         df = np.concatenate([df[:len_df], zeros], 0)
+        #     else:
+        #         LOGGER('!!! LiDAR points exceed', len_max)
+        #         df = df[:len_max]
         
         df = df.T
-        df = torch.from_numpy(df)
+        # df = torch.from_numpy(df)
         
-        if False:
-            img_sh, lid = torch.split(torch.from_numpy(img), 3, -1)
-            from matplotlib import pyplot as PLT
-            pt_show = df
-            shape_show = int(new_shape[1])
-            pt_show[0:2] = pt_show[0:2] * shape_show
-            u,v,z,i = pt_show
-            PLT.figure(figsize=(12,5),dpi=96,tight_layout=True)
-            PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2) #'rainbow_r'
-            PLT.axis([0,shape_show,shape_show,0])
-            PLT.imshow(img_sh)
-            PLT.show()
+        # img_sh, lid = torch.split(torch.from_numpy(img), 3, -1)
+        # from matplotlib import pyplot as PLT
+        # pt_show = df
+        # shape_show = int(new_shape[1])
+        # pt_show[0:2] = pt_show[0:2] * shape_show
+        # u,v,z,i = pt_show
+        # PLT.figure(figsize=(12,5),dpi=96,tight_layout=True)
+        # PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2) #'rainbow_r'
+        # PLT.axis([0,shape_show,shape_show,0])
+        # PLT.imshow(img_sh)
+        # PLT.show()
 
 
         if labels.get("ratio_pad"):
@@ -511,6 +510,86 @@ class RandomFlip_LiDAR(RandomFlip):
 
         return labels
 
+class Grouping_LiDAR:
+    def __call__(self, labels:np.ndarray):
+        img = labels["img"]
+        df = labels["df"] # c, n
+        depth = 8
+        
+        data = df.T
+        data[:,2] = 1 - data[:,2]
+
+        shape = img.shape[:2]
+        w, h = shape
+
+        
+        group = np.zeros((w, h, depth), dtype=np.float32)
+        groupidx = np.zeros((w, h, 1), dtype=np.int8)
+        scale = np.ones(data.shape[-1])
+        scale[0] = w
+        scale[1] = h
+        np.asarray(scale, dtype=np.float32)
+        data = data * scale
+
+        for pt in data:
+            x, y = int(pt[0]), int(pt[1])
+
+            if x < 0 or x >= w or y < 0 or y >= h:
+                continue
+            
+            idx = groupidx[x][y]
+            if idx >= depth:
+                continue
+
+            if group[x][y][idx] == 0.0:
+                group[x][y][idx] = pt[2]
+                groupidx[x][y] += 1
+
+        groupidx = np.asarray(groupidx, dtype=group.dtype) / depth
+        group = np.concatenate((groupidx, group), 2)
+
+        labels["df"] = df = torch.from_numpy(group.transpose(2,0,1)) #c, w, h
+        return labels
+    
+# class Grouping_LiDAR:
+#     def __call__(self, labels:np.ndarray):
+#         img = labels["img"]
+#         df = labels["df"] # c, n
+#         depth = 4
+        
+#         data = df.T
+#         data[:,3] = 1
+#         shape = img.shape[:2]
+#         w, h = shape
+
+#         groupsize = (w, h, depth, data.shape[-1])
+#         group = np.zeros(groupsize)
+#         scale = np.ones(data.shape[-1])
+#         scale[0] = w
+#         scale[1] = h
+#         np.asarray(scale, dtype=np.float32)
+#         data = data * scale
+#         zero_data = np.zeros(data.shape[-1])
+
+#         for pt in data:
+#             x, y = int(pt[0]), int(pt[1])
+
+#             if x < 0 or x >= w or y < 0 or y >= h:
+#                 continue
+
+#             for d in range(depth):
+#                 if np.array_equal(group[x][y][d], zero_data):
+#                     pt[0] -= x
+#                     pt[1] -= y
+#                     group[x][y][d] = pt
+#                     break
+
+#         # group[:,:,:,0] -= 0.5
+#         # group[:,:,:,1] -= 0.5
+
+#         labels["df"] = df = torch.from_numpy(group.reshape(w, h, -1).transpose(2,0,1)) #c, w, h
+#         return labels
+
 def LiDAR_transforms(dataset, imgsz, hyp, stretch=False):
     """
     Applies a series of image transformations for training.
@@ -574,6 +653,7 @@ def LiDAR_transforms(dataset, imgsz, hyp, stretch=False):
             RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
             RandomFlip_LiDAR(direction="vertical", p=hyp.flipud),
             RandomFlip_LiDAR(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
-            Process_LiDAR(),
+            # Process_LiDAR(),
+            Grouping_LiDAR(),
         ]
     )  # transforms

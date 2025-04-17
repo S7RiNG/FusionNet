@@ -11,40 +11,47 @@ import numpy as np
 if __name__ == "__main__":
 
     if sys.platform == 'win32':
-        data = r'E:\Dataset\kitti\yolo_fusion\data.yaml'
+        data = r'E:\Dataset\kitti\yolo_fusion_resize\data.yaml'
         device = 'cuda'
+        modelyaml = r'E:\Work\stu\FusionNet\ultralytics\cfg\models\fusion\yolov8m-fusion_18.yaml'
     elif sys.platform == 'darwin':
         data = r'/Users/harrier/Work/kitti/yolo_fusion/data.yaml'
         device = 'mps'
+        modelyaml = '/Users/harrier/Work/stu/FusionNet/ultralytics/cfg/models/fusion/yolov8m-fusion_20.yaml'
 
-    epochs = 200
-    batch = 2
+    if True:
+        modelcreater = YOLO
+    else:
+        modelcreater = FusionNet
+
+    epochs = 100
+    batch = 8
+    
     # time.sleep(3600)
     
     # Train
     # model = FusionNet('ultralytics/cfg/models/fusion/yolov8m-fusion.yaml', verbose=True)
     # model = YOLO('ultralytics/cfg/models/v8/yolov8m.yaml', verbose=True)
-    model = FusionNet(r'E:\Work\stu\FusionNet\ultralytics\cfg\models\fusion\yolov8m-fusion_6.yaml', verbose=True)
-    # model = FusionNet('/Users/harrier/Work/stu/FusionNet/ultralytics/cfg/models/fusion/yolov8s-fusion_6.yaml', verbose=True)
-    # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\fusion_aug1\weights\best.pt', verbose=True)
-    # torchinfo.summary(model)
+    model = FusionNet(modelyaml, verbose=True)
+    # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train4\weights\best.pt', verbose=True)
+    # # print(model)
 
-    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=8, close_mosaic=20)
+    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=7)
 
-    # res = model.val(data=data, device=device, batch=batch, cache='disk', workers=4)
+    # res = model.val(data=data, device=device, batch=batch, cache='disk', workers=7)
 
-    # # Resume
-    # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train4\weights\last.pt')
+    # # Resume mig
+    # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train8\weights\last.pt')
     # res = model.train(resume=True)
+    # res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=6)
 
     # Val
     # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train\weights\best.pt')
     # torchinfo.summary(model)
-    # res = model.val(data=data, device=device, batch=2, cache='disk')
+    # res = model.val(data=data, device=device, batch=batch, cache='disk', workers=5)
 
     # model = YOLO('ultralytics/cfg/models/v8/yolov8m.yaml', verbose=True)
-    # torchinfo.summary(model)
-    # res = model.train(data=data, device=device, epochs=100, batch=32, cache='disk', augment=False)
+    # res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk')
 
 
     # ln = LiDAR_norm()

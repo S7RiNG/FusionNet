@@ -282,7 +282,7 @@ import math
 from copy import deepcopy 
 from ultralytics.utils import DEFAULT_CFG
 from torch.utils.data import Dataset
-from ultralytics.data.lidar import LiDAR_norm, LetterBox_LiDAR
+from ultralytics.data.lidar import LiDAR_norm, LetterBox_LiDAR, Grouping_LiDAR
 class FusionDataset(YOLODataset):
     def __init__(
         self,
@@ -436,7 +436,7 @@ class FusionDataset(YOLODataset):
             hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
             transforms = LiDAR_transforms(self, self.imgsz, hyp)
         else:
-            transforms = Compose([LiDAR_norm(), LetterBox_LiDAR(new_shape=(self.imgsz, self.imgsz), scaleup=False, mode=self.mode)])
+            transforms = Compose([LiDAR_norm(), LetterBox_LiDAR(new_shape=(self.imgsz, self.imgsz), scaleup=False, mode=self.mode), Grouping_LiDAR()])
         transforms.append(
             Format(
                 bbox_format="xywh",

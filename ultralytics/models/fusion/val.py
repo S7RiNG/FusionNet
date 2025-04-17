@@ -236,7 +236,7 @@ class FusionNetAutoBackend(AutoBackend):
         else:
             return self.from_numpy(y)
         
-    def warmup(self, imgsz=(1, 3, 640, 640), dfsz=(1,4,30000)):
+    def warmup(self, imgsz=(1, 3, 640, 640), dfsz=(1,9,640,640)):
         """
         Warm up the model by running one forward pass with a dummy input.
 

@@ -100,6 +100,11 @@ from .fusion import (
     FusionImageLidar,
     FusionLidar,
     FusionLidar_Pyrmid,
+    Lidar_group,
+    Lidar_PositionalEncoding2D,
+    Lidar_microattn,
+    Lidar_HelfMaxpool,
+    Lidar_Add
 )
 
 __all__ = (

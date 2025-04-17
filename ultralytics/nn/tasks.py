@@ -72,6 +72,11 @@ from ultralytics.nn.modules import (
     FusionImageLidar,
     FusionLidar,
     FusionLidar_Pyrmid,
+    Lidar_group,
+    Lidar_PositionalEncoding2D,
+    Lidar_microattn,
+    Lidar_HelfMaxpool,
+    Lidar_Add
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -343,7 +348,7 @@ class DetectionModel(BaseModel):
                 if self.end2end:
                     return self.forward(x)["one2many"]
                 if isinstance(self, FusionNetModel):
-                    x = (x, torch.zeros(1, 4, s))
+                    x = (x, torch.zeros(1, 9, s, s))
                 return self.forward(x)[0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)
             if isinstance(self, FusionNetModel):
                     s = 640
@@ -448,7 +453,7 @@ class FusionNetModel(DetectionModel):
                     x = [x if j == -1 else (y[j] if isinstance(j, int) else df) for j in m.f]  # from earlier layers
             if profile:
                 self._profile_one_layer(m, x, dt)
-            if isinstance(m, FusionLidar) or isinstance(m, FusionLidar_Pyrmid):
+            if isinstance(m, (FusionLidar, FusionLidar_Pyrmid, Lidar_group, Lidar_microattn)):
                 x = m(x, rgbshape)
             else:
                 x = m(x)  # run
@@ -1070,7 +1075,11 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             SCDown,
             C2fCIB,
         }:
-            c1, c2 = ch[f], args[0]
+            if isinstance(f, int):
+                c1 = ch[f]
+            else:
+                c1 = d.get("fusiondim").get(f)
+            c2 = args[0]
             if c2 != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)
                 c2 = make_divisible(min(c2, max_channels) * width, 8)
             if m is C2fAttn:
@@ -1155,6 +1164,22 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             else:
                 c1 = d.get("fusiondim").get(f)
             args = [c1, c2]
+        elif m is Lidar_group:
+            if isinstance(f, int):
+                c1 = ch[f]
+            else:
+                c1 = d.get("fusiondim").get(f)
+            c2 = c1 * 8
+        elif m is Lidar_microattn:
+            c1 = ch[f[0]]
+            args = [c1]
+            c2 = c1
+        elif m in {Lidar_HelfMaxpool, Lidar_Add}:
+            c2 = ch[f[0]]
+            args = []
+        elif m is Lidar_PositionalEncoding2D:
+            c2 = ch[f]
+            args = [c2]
         else:
             c2 = ch[f]
 
