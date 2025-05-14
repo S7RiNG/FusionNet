@@ -9,11 +9,11 @@ from ultralytics.data.lidar import LetterBox_LiDAR, LiDAR_norm
 import numpy as np
 
 if __name__ == "__main__":
-
+    
     if sys.platform == 'win32':
-        data = r'E:\Dataset\kitti\yolo_fusion_resize\data.yaml'
+        data = r'E:\Dataset\kitti\yolo_fusion\data.yaml'
         device = 'cuda'
-        modelyaml = r'E:\Work\stu\FusionNet\ultralytics\cfg\models\fusion\yolov8m-fusion_18.yaml'
+        modelyaml = r'E:\Work\stu\FusionNet\ultralytics\cfg\models\fusion\yolov8m-fusion_22_Swin1_ex.yaml'
     elif sys.platform == 'darwin':
         data = r'/Users/harrier/Work/kitti/yolo_fusion/data.yaml'
         device = 'mps'
@@ -33,15 +33,11 @@ if __name__ == "__main__":
     # model = FusionNet('ultralytics/cfg/models/fusion/yolov8m-fusion.yaml', verbose=True)
     # model = YOLO('ultralytics/cfg/models/v8/yolov8m.yaml', verbose=True)
     model = FusionNet(modelyaml, verbose=True)
-    # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train4\weights\best.pt', verbose=True)
-    # # print(model)
 
-    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=7)
-
-    # res = model.val(data=data, device=device, batch=batch, cache='disk', workers=7)
+    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=2)
 
     # # Resume mig
-    # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train8\weights\last.pt')
+    # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train19\weights\last.pt')
     # res = model.train(resume=True)
     # res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=6)
 

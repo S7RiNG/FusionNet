@@ -104,7 +104,10 @@ from .fusion import (
     Lidar_PositionalEncoding2D,
     Lidar_microattn,
     Lidar_HelfMaxpool,
-    Lidar_Add
+    Lidar_Add,
+    SwinBlock,
+    SwinBlock_Cross,
+    SwinEmbed
 )
 
 __all__ = (

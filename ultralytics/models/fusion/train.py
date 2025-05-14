@@ -47,10 +47,18 @@ class FusionNetTrainer(DetectionTrainer):
     
     def plot_training_samples(self, batch, ni):
         """Plots training samples with their annotations."""
-        if batch["img"].shape[1] == 6:
-            lids, imgs = torch.split(batch["img"], 3, 1)  # RGB
+        if len(batch["df"][0].shape) == 3:
+            dfs = batch["df"]
+            dfs_show = []
+            for df in dfs:
+                if df.shape[0] < 3:
+                    df = torch.cat((df, torch.zeros(3-df.shape[0], df.shape[1], df.shape[2], dtype=df.dtype, device=df.device)))
+                elif df.shape[0] > 3:
+                    df = df[-3:,:,:]
+                dfs_show.append(df)
+            dfs_show = torch.stack(dfs_show, dim=0)
             plot_images(
-                images=lids,
+                images=dfs_show,
                 batch_idx=batch["batch_idx"],
                 cls=batch["cls"].squeeze(-1),
                 bboxes=batch["bboxes"],
@@ -58,11 +66,9 @@ class FusionNetTrainer(DetectionTrainer):
                 fname=self.save_dir / f"train_batch_LiDAR{ni}.jpg",
                 on_plot=self.on_plot,
             )
-        else:
-            imgs = batch["img"]  # RGB
 
         plot_images(
-            images=imgs,
+            images=batch["img"],
             batch_idx=batch["batch_idx"],
             cls=batch["cls"].squeeze(-1),
             bboxes=batch["bboxes"],

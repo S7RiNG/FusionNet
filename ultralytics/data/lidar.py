@@ -6,13 +6,19 @@ import torch
 from torch import Tensor
 from torchvision.transforms import functional as f
 import cv2
+import math
 
 from ultralytics.utils import LOGGER
 from ultralytics.utils.instance import Instances
 from ultralytics.data.augment import Compose, CopyPaste, LetterBox, Mosaic, RandomFlip, RandomHSV, RandomPerspective, Albumentations
 
 def read_lidarmap(path) -> Tensor:
-    return cv2.imread(str(path))
+    map = np.array(Image.open(str(path)))
+    if len(map.shape) < 3:
+        return np.expand_dims(map, -1)
+    else:
+        return map
+    # return cv2.imread(str(path))
 
 def read_lidarpoint(path) -> Tensor:
     return np.load(path)
@@ -20,13 +26,21 @@ def read_lidarpoint(path) -> Tensor:
 def read_combo(img_path) -> Tensor:
     path = Path(img_path)
     path_map = path.parent/'..'/'maps'/path.name
+    path_map9ch = Path.with_suffix((path.parent/'..'/'map9ch'/path.name), '.npy') 
+    path_depth = path.parent/'..'/'depths'/path.name
     path_point = Path.with_suffix((path.parent/'..'/'points'/path.name), '.npy') 
 
     im = cv2.imread(str(path))
-    # map = read_lidarmap(path_map)
-    point = read_lidarpoint(path_point)
-    # cat = np.concatenate([im, map], 2)
-    return im, point
+
+    if False: #points
+        df = np.load(path_point)
+    elif False:
+        df = read_lidarmap(path_map)
+    elif True: #path_map9ch
+        df = np.load(path_map9ch)
+    else:
+        df = read_lidarmap(path_depth)
+    return im, df
 
 class LiDAR_norm:
     def __call__(self, labels=None, image=None, df=None):
@@ -34,8 +48,10 @@ class LiDAR_norm:
             labels = {}
         img = labels.get("img") if image is None else image
         df = labels.get("df") if df is None else df
-
         df = df.astype(np.float32)
+        if len(df.shape) == 3:
+            labels["df"] = df
+            return labels
 
         h, w = labels.get("ori_shape")
         df[:,0] = df[:,0]/w
@@ -49,61 +65,56 @@ class LiDAR_norm:
         else:
             return df
 
-class Process_LiDAR:
-    def __init__(self, lenmax=28000, mode:str='train'):
-        self.lenmax = lenmax
-        self.mode = mode
+# class Process_LiDAR:
+#     def __init__(self, lenmax=28000, mode:str='train'):
+#         self.lenmax = lenmax
+#         self.mode = mode
 
-    def __call__(self, labels=None, df=None):
-        df = labels.get("df") if df is None else df
-        df = df.T
+#     def __call__(self, labels=None, df=None):
+#         df = labels.get("df") if df is None else df
+#         df = df.T
 
-        #add noise
-        if self.mode == "train":
-            noise = np.random.normal(0, 0.001, df.shape)
-            df += noise
+#         #add noise
+#         if self.mode == "train":
+#             noise = np.random.normal(0, 0.001, df.shape)
+#             df += noise
         
-        #shuffle
-        np.random.shuffle(df)
+#         #shuffle
+#         np.random.shuffle(df)
 
-        #limit length
-        len_max = self.lenmax
-        len_df = df.shape[0]
-        len_zero = len_max - len_df
+#         #limit length
+#         len_max = self.lenmax
+#         len_df = df.shape[0]
+#         len_zero = len_max - len_df
         
-        if len_zero <= 0:
-            if self.mode == "val":
-                print('!!! LiDAR points exceed', len_max)
-                df = df[:len_max]
-            len_zero = np.random.randint(1000, 2000)
-            len_df = len_max - len_zero
+#         if len_zero <= 0:
+#             if self.mode == "val":
+#                 print('!!! LiDAR points exceed', len_max)
+#                 df = df[:len_max]
+#             len_zero = np.random.randint(1000, 2000)
+#             len_df = len_max - len_zero
         
-        zeros = np.zeros([len_zero, 4], dtype=df.dtype)
-        df = np.concatenate([df[:len_df], zeros], 0)
+#         zeros = np.zeros([len_zero, 4], dtype=df.dtype)
+#         df = np.concatenate([df[:len_df], zeros], 0)
         
-        df = df.T
-        
-
-        if False:
-            from matplotlib import pyplot as PLT
-            pt_show = df
-            shape_show = 640
-            pt_show[0:2] = pt_show[0:2] * shape_show
-            u,v,z,i = pt_show
-            PLT.figure(figsize=(12,5),dpi=96,tight_layout=True)
-            PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2) #'rainbow_r'
-            PLT.axis([0,shape_show,shape_show,0])
-            PLT.imshow(labels['img'])
-            PLT.show()
-            while True: continue
-
-        
-
-        if labels is None:
-            return df
-        else:
-            labels["df"] = df
-            return labels
+#         df = df.T
+#         if False:
+#             from matplotlib import pyplot as PLT
+#             pt_show = df
+#             shape_show = 640
+#             pt_show[0:2] = pt_show[0:2] * shape_show
+#             u,v,z,i = pt_show
+#             PLT.figure(figsize=(12,5),dpi=96,tight_layout=True)
+#             PLT.scatter([u],[v],c=[z],cmap='rainbow_r',alpha=0.5,s=2) #'rainbow_r'
+#             PLT.axis([0,shape_show,shape_show,0])
+#             PLT.imshow(labels['img'])
+#             PLT.show()
+#             while True: continue
+#         if labels is None:
+#             return df
+#         else:
+#             labels["df"] = df
+#             return labels
 
 class LetterBox_LiDAR(LetterBox):
     def __init__(self, new_shape=(640, 640), auto=False, scaleFill=False, scaleup=True, center=True, stride=32, mode:str='train'):
@@ -162,53 +173,58 @@ class LetterBox_LiDAR(LetterBox):
             dw /= 2  # divide padding into 2 sides
             dh /= 2
 
-        rgb = img[:,:,:3]
         if shape[::-1] != new_unpad:  # resize
-            rgb = cv2.resize(rgb, new_unpad, interpolation=cv2.INTER_LINEAR)
-            
-        if img.shape[-1] == 6:
-            lid = img[:,:,3:]
-            lid = cv2.resize(lid, new_unpad, interpolation=cv2.INTER_NEAREST)
+            img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
+        
+        if len(df.shape) == 3:
+            df = cv2.resize(df, new_unpad, interpolation=cv2.INTER_LINEAR)
+            if len(df.shape) != 3:
+                df = np.expand_dims(df, -1)
 
         top, bottom = int(round(dh - 0.1)) if self.center else 0, int(round(dh + 0.1))
         left, right = int(round(dw - 0.1)) if self.center else 0, int(round(dw + 0.1))
-        rgb = cv2.copyMakeBorder(
-            rgb, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114)
+        img = cv2.copyMakeBorder(
+            img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114)
         )  # add border to rgb
 
-        if img.shape[-1] == 6:
-            lid = cv2.copyMakeBorder(
-                lid, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(0, 0, 0)
-            )  # add border to lidar
-            img = np.concatenate((rgb, lid), axis=2)
+        if len(df.shape) == 3:
+            df = np.pad(df, pad_width=((top, bottom), (left, right), (0,0)), mode="constant", constant_values=114)
+            # df = cv2.copyMakeBorder(
+            #     df, top, bottom, left, right, cv2.BORDER_CONSTANT, value=114
+            # )  # add border to lidar
+
+            # dim = df.shape[-1]
+            # buf = []
+            # for slic_dim in range(0, dim, 3):
+            #     slic_dim_end = min(slic_dim+3, dim)
+            #     slic = df[:,:,slic_dim:slic_dim_end]
+
+            #     ndim = slic_dim_end - slic_dim_end
+            #     value = (114, 114, 114) if ndim==3 else (114, 114) if ndim==2 else 114
+            #     slic = cv2.copyMakeBorder(
+            #         slic, top, bottom, left, right, cv2.BORDER_CONSTANT, value=value
+            #     )  # add border to lidar
+            #     if len(slic.shape) != 3:
+            #         slic = np.expand_dims(slic, -1)
+            #     buf.append(slic)
+            # df = np.concatenate(buf, -1)
+           
+            if len(df.shape) != 3:
+                df = np.expand_dims(df, -1)
         else:
-            img = rgb
+            #LiDAR point
+            df = np.array(df)
+            lidar_scale = np.array([new_unpad[0]/(new_unpad[0] + left + right), new_unpad[1]/(new_unpad[1] + top + bottom)], dtype=np.float32) #w, h scale
+            lidar_offset = (1.0 - lidar_scale) * [
+                1 if (left + right) == 0 else (left / (left + right)),
+                1 if (top + bottom) == 0 else (top / (top + bottom))
+                ]
+            df[:, 0:2] = (df[:, 0:2] * lidar_scale)  + lidar_offset
 
-        #LiDAR point
-        df = np.array(df)
-        lidar_scale = np.array([new_unpad[0]/(new_unpad[0] + left + right), new_unpad[1]/(new_unpad[1] + top + bottom)], dtype=np.float32) #w, h scale
-        lidar_offset = (1.0 - lidar_scale) * [
-            1 if (left + right) == 0 else (left / (left + right)),
-            1 if (top + bottom) == 0 else (top / (top + bottom))
-            ]
-        df[:, 0:2] = (df[:, 0:2] * lidar_scale)  + lidar_offset
-
-        # df = df[np.argsort(df[:,2], kind="stable")[::-1]]
-        np.random.shuffle(df)
-        
-        # if self.mode == "val":
-        #     len_max = 28000
-        #     len_df = df.shape[0]
-        #     len_zero = len_max - len_df 
-        #     if len_zero > 0:
-        #         zeros = np.zeros([len_zero, 4], dtype=df.dtype)
-        #         df = np.concatenate([df[:len_df], zeros], 0)
-        #     else:
-        #         LOGGER('!!! LiDAR points exceed', len_max)
-        #         df = df[:len_max]
-        
-        df = df.T
-        # df = torch.from_numpy(df)
+            # df = df[np.argsort(df[:,2], kind="stable")[::-1]]
+            np.random.shuffle(df) 
+            df = df.T
+            # df = torch.from_numpy(df)
         
         # img_sh, lid = torch.split(torch.from_numpy(img), 3, -1)
         # from matplotlib import pyplot as PLT
@@ -262,6 +278,10 @@ class Mosic_LiDAR(Mosaic):
         self.n = n
 
     def _mosaic4(self, labels):
+        if len(labels["df"].shape) == 3:
+            imdf = True
+        else:
+            imdf = False
         mosaic_labels = []
         s = self.imgsz
         yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.border)  # mosaic center x, y
@@ -270,6 +290,10 @@ class Mosic_LiDAR(Mosaic):
             # Load image
             img = labels_patch["img"]
             df = labels_patch["df"]
+
+            if imdf:
+                img = np.concatenate((img, df), axis=2)
+
             h, w = labels_patch.pop("resized_shape")
 
             # Place img in img4
@@ -292,36 +316,44 @@ class Mosic_LiDAR(Mosaic):
             padw = x1a - x1b
             padh = y1a - y1b
 
-            df_ymin = y1b/h
-            df_ymax = y2b/h
-            df_xmin = x1b/w
-            df_xmax = x2b/w
+            if imdf == False:
+                df_ymin = y1b/h
+                df_ymax = y2b/h
+                df_xmin = x1b/w
+                df_xmax = x2b/w
 
-            dft = df.T
-            lim1 = dft[0] > df_xmin
-            lim2 = dft[0] < df_xmax
-            lim3 = dft[1] > df_ymin
-            lim4 = dft[1] < df_ymax
-            limx = np.logical_and(lim1, lim2)
-            limy = np.logical_and(lim3, lim4)
-            lim = np.logical_and(limx, limy)
+                dft = df.T
+                lim1 = dft[0] > df_xmin
+                lim2 = dft[0] < df_xmax
+                lim3 = dft[1] > df_ymin
+                lim4 = dft[1] < df_ymax
+                limx = np.logical_and(lim1, lim2)
+                limy = np.logical_and(lim3, lim4)
+                lim = np.logical_and(limx, limy)
 
-            df_xscale = ((x2a - x1a) / (s * 2)) / ((x2b - x1b) / w)
-            df_yscale = ((y2a - y1a) / (s * 2)) / ((y2b - y1b) / h)
+                df_xscale = ((x2a - x1a) / (s * 2)) / ((x2b - x1b) / w)
+                df_yscale = ((y2a - y1a) / (s * 2)) / ((y2b - y1b) / h)
 
-            df_xoffset = (x1a / (s * 2) - (x1b / w) * df_xscale)
-            df_yoffset = (y1a / (s * 2) - (y1b / w) * df_yscale)
+                df_xoffset = (x1a / (s * 2) - (x1b / w) * df_xscale)
+                df_yoffset = (y1a / (s * 2) - (y1b / w) * df_yscale)
 
-            df_append = df[np.where(lim)]
-            df_append[:, 0] = df_append[:, 0] * df_xscale + df_xoffset
-            df_append[:, 1] = df_append[:, 1] * df_yscale + df_yoffset
+                df_append = df[np.where(lim)]
+                df_append[:, 0] = df_append[:, 0] * df_xscale + df_xoffset
+                df_append[:, 1] = df_append[:, 1] * df_yscale + df_yoffset
 
-            df4.append(df_append)
+                df4.append(df_append)
+            
             labels_patch = self._update_labels(labels_patch, padw, padh)
             mosaic_labels.append(labels_patch)
+        
+        if imdf:
+            df4 = img4[:,:,3:]
+            img4 = img4[:,:,:3]
+        else:
+            df4 = np.concatenate(df4, axis=0).T
+            
         final_labels = self._cat_labels(mosaic_labels)
         final_labels["img"] = img4
-        df4 = np.concatenate(df4, axis=0).T
         final_labels["df"] = df4
 
         if False:
@@ -391,8 +423,7 @@ class RandomPerspective_LiDAR(RandomPerspective):
         self.size = img.shape[1] + border[1] * 2, img.shape[0] + border[0] * 2  # w, h
         # M is affine matrix
         # Scale for func:`box_candidates`
-        img, M, scale = self.affine_transform(img, border)
-        df = self.apply_lidar(M, df, shape_in, img.shape[:2][::-1])
+        img, M, scale, df = self.affine_transform(img, border, df, shape_in)
         bboxes = self.apply_bboxes(instances.bboxes, M)
 
         segments = instances.segments
@@ -418,7 +449,6 @@ class RandomPerspective_LiDAR(RandomPerspective):
         labels["img"] = img
         labels["resized_shape"] = img.shape[:2]
         labels["df"] = df
-
         if False:
             from matplotlib import pyplot as PLT
             pt_show = df
@@ -433,31 +463,125 @@ class RandomPerspective_LiDAR(RandomPerspective):
             while True: pass
         return labels
     
-    def apply_lidar(self, M:np.matrix, df:np.matrix, shape, shape_out):
-        # denorm
-        denorm = np.array(shape).reshape([-1, 2])
-        norm = np.array(shape_out).reshape([-1, 2])
-        dft = df.T # n first
-        xy = np.ones([dft.shape[0], 3])
-        xy[:, :2] = dft[:, :2] * denorm
-        xy = xy @ M.T
-        xy[:, :2] = (xy[:, :2] / xy[:, 2:3] if self.perspective else xy[:, :2])
-        xy[:, :2] = xy[:, :2] / norm
+    def affine_transform(self, img, border, df, shape_in):
+        """
+        Applies a sequence of affine transformations centered around the image center.
 
-        dft_affine = np.empty(np.shape(dft))
-        dft_affine[:, :2] = xy[:, :2]
-        dft_affine[:, 2:] = dft[:, 2:]
+        This function performs a series of geometric transformations on the input image, including
+        translation, perspective change, rotation, scaling, and shearing. The transformations are
+        applied in a specific order to maintain consistency.
 
-        lim1 = dft_affine.T[0] < 1
-        lim2 = dft_affine.T[0] > 0
-        lim3 = dft_affine.T[1] < 1
-        lim4 = dft_affine.T[1] > 0
-        limx = np.logical_and(lim1, lim2)
-        limy = np.logical_and(lim3, lim4)
-        lim = np.logical_and(limx, limy)
+        Args:
+            img (np.ndarray): Input image to be transformed.
+            border (Tuple[int, int]): Border dimensions for the transformed image.
 
-        dft_affine = dft_affine[lim]
-        return dft_affine.T
+        Returns:
+            (Tuple[np.ndarray, np.ndarray, float]): A tuple containing:
+                - np.ndarray: Transformed image.
+                - np.ndarray: 3x3 transformation matrix.
+                - float: Scale factor applied during the transformation.
+
+        Examples:
+            >>> import numpy as np
+            >>> img = np.random.rand(100, 100, 3)
+            >>> border = (10, 10)
+            >>> transformed_img, matrix, scale = affine_transform(img, border)
+        """
+        # Center
+        C = np.eye(3, dtype=np.float32)
+
+        C[0, 2] = -img.shape[1] / 2  # x translation (pixels)
+        C[1, 2] = -img.shape[0] / 2  # y translation (pixels)
+
+        # Perspective
+        P = np.eye(3, dtype=np.float32)
+        P[2, 0] = random.uniform(-self.perspective, self.perspective)  # x perspective (about y)
+        P[2, 1] = random.uniform(-self.perspective, self.perspective)  # y perspective (about x)
+
+        # Rotation and Scale
+        R = np.eye(3, dtype=np.float32)
+        a = random.uniform(-self.degrees, self.degrees)
+        # a += random.choice([-180, -90, 0, 90])  # add 90deg rotations to small rotations
+        s = random.uniform(1 - self.scale, 1 + self.scale)
+        # s = 2 ** random.uniform(-scale, scale)
+        R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
+
+        # Shear
+        S = np.eye(3, dtype=np.float32)
+        S[0, 1] = math.tan(random.uniform(-self.shear, self.shear) * math.pi / 180)  # x shear (deg)
+        S[1, 0] = math.tan(random.uniform(-self.shear, self.shear) * math.pi / 180)  # y shear (deg)
+
+        # Translation
+        T = np.eye(3, dtype=np.float32)
+        T[0, 2] = random.uniform(0.5 - self.translate, 0.5 + self.translate) * self.size[0]  # x translation (pixels)
+        T[1, 2] = random.uniform(0.5 - self.translate, 0.5 + self.translate) * self.size[1]  # y translation (pixels)
+
+        # Combined rotation matrix
+        M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
+        # Affine image
+        if (border[0] != 0) or (border[1] != 0) or (M != np.eye(3)).any():  # image changed
+            if self.perspective:
+                img = cv2.warpPerspective(img, M, dsize=self.size, borderValue=(114, 114, 114))
+            else:  # affine
+                img = cv2.warpAffine(img, M[:2], dsize=self.size, borderValue=(114, 114, 114))
+
+
+
+            if len(df.shape) == 3:
+                dim = df.shape[-1]
+                buf = []
+                for slic_dim in range(0, dim, 3):
+                    slic_dim_end = min(slic_dim+3, dim)
+                    slic = df[:,:,slic_dim:slic_dim_end]
+
+                    ndim = slic.shape[-1]
+                    value = [114, ] * ndim
+                    if self.perspective:
+                        slic = cv2.warpPerspective(slic, M, dsize=self.size, borderValue=value)
+                    else:
+                        slic = cv2.warpAffine(slic, M[:2], dsize=self.size, borderValue=value)
+                    
+                    if len(slic.shape) != 3:
+                        slic = np.expand_dims(slic, -1)
+                    buf.append(slic)
+                df = np.concatenate(buf, -1)
+            if len(df.shape) != 3:
+                df = np.expand_dims(df, -1)
+        if len(df.shape) != 3:
+            df = self.apply_lidar(M, df, shape_in, img.shape[:2][::-1])
+        return img, M, s, df
+    
+    def apply_lidar(self, M:np.matrix, df:np.matrix, shape, shape_out, border):
+        if len(df.shape) == 3:
+            df, M, scale = self.affine_transform(df, border)
+            if len(df.shape) != 3:
+                df = np.expand_dims(df, -1)
+            return df
+        else:
+            # denorm
+            denorm = np.array(shape).reshape([-1, 2])
+            norm = np.array(shape_out).reshape([-1, 2])
+            dft = df.T # n first
+            xy = np.ones([dft.shape[0], 3])
+            xy[:, :2] = dft[:, :2] * denorm
+            xy = xy @ M.T
+            xy[:, :2] = (xy[:, :2] / xy[:, 2:3] if self.perspective else xy[:, :2])
+            xy[:, :2] = xy[:, :2] / norm
+
+            dft_affine = np.empty(np.shape(dft))
+            dft_affine[:, :2] = xy[:, :2]
+            dft_affine[:, 2:] = dft[:, 2:]
+
+            lim1 = dft_affine.T[0] < 1
+            lim2 = dft_affine.T[0] > 0
+            lim3 = dft_affine.T[1] < 1
+            lim4 = dft_affine.T[1] > 0
+            limx = np.logical_and(lim1, lim2)
+            limy = np.logical_and(lim3, lim4)
+            lim = np.logical_and(limx, limy)
+
+            dft_affine = dft_affine[lim]
+            return dft_affine.T
         
 class RandomFlip_LiDAR(RandomFlip):
     def __call__(self, labels):
@@ -496,11 +620,17 @@ class RandomFlip_LiDAR(RandomFlip):
         if self.direction == "vertical" and random.random() < self.p:
             img = np.flipud(img)
             instances.flipud(h)
-            df[1] = 1 - df[1]
+            if len(df.shape) == 3:
+                df = np.flipud(df)
+            else:
+                df[1] = 1 - df[1]
         if self.direction == "horizontal" and random.random() < self.p:
             img = np.fliplr(img)
             instances.fliplr(w)
-            df[0] = 1 - df[0]
+            if len(df.shape) == 3:
+                df = np.fliplr(df)
+            else:
+                df[0] = 1 - df[0]
             # For keypoints
             if self.flip_idx is not None and instances.keypoints is not None:
                 instances.keypoints = np.ascontiguousarray(instances.keypoints[:, self.flip_idx, :])
@@ -514,6 +644,12 @@ class Grouping_LiDAR:
     def __call__(self, labels:np.ndarray):
         img = labels["img"]
         df = labels["df"] # c, n
+
+        if len(df.shape) == 3: #norm
+            df = df / 255
+            labels["df"] = torch.from_numpy(df).permute(2,0,1)
+            return labels
+        
         depth = 8
         
         data = df.T

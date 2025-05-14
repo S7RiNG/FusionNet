@@ -5,6 +5,7 @@ import math
 from positional_encodings.torch_encodings import PositionalEncodingPermute1D, PositionalEncoding2D, PositionalEncodingPermute2D
 from torch.nn.init import constant_, xavier_uniform_
 from .block import C2f, SPPF
+from .Fusion_SwinTransformer import BasicLayer_Cross as Swin_BasicLayer_Cross, BasicLayer as Swin_BasicLayer, PatchMerging as Swin_PatchMerging, PatchEmbed as Swin_PatchEmbed
 
 import time
 
@@ -631,3 +632,36 @@ class Lidar_Add(nn.Module):
     
 
 
+class SwinEmbed(nn.Module):
+    def __init__(self, d_in, d_out, patch_size):
+        super().__init__()
+        self.emb = Swin_PatchEmbed(in_c=d_in, embed_dim=d_out, patch_size=patch_size, norm_layer=nn.LayerNorm)
+    
+    def forward(self, x):
+        x, W, H = self.emb(x)
+        return torch.unflatten(x.permute(0,2,1), -1, (W, H))
+    
+class SwinBlock(nn.Module):
+    def __init__(self, d_model, is_downsample):
+        super().__init__()
+        self.swin_layear = Swin_BasicLayer(d_model, 2, 8, 7, downsample=Swin_PatchMerging if is_downsample else None)
+    
+    def forward(self, X:torch.Tensor) -> torch.Tensor:
+        B, C, W, H = X.shape
+        X = X.flatten(2).permute(0,2,1) #B;L;C
+        res, W, H = self.swin_layear(X, W, H)
+        return torch.unflatten(res.permute(0,2,1), -1, (W, H))
+
+class SwinBlock_Cross(nn.Module):
+    def __init__(self, d_model, is_downsample):
+        super().__init__()
+        self.swin_layear = Swin_BasicLayer_Cross(d_model, 2, 8, 7, downsample=Swin_PatchMerging if is_downsample else None)
+    
+    def forward(self, X:list[torch.Tensor]) -> torch.Tensor:
+        data_q, data_kv = X
+        B, C, W, H = data_q.shape
+        data_q = data_q.flatten(2).permute(0,2,1) #B;L;C
+        data_kv = data_kv.flatten(2).permute(0,2,1) #B;L;C
+        res, W, H = self.swin_layear(data_q, data_kv, W, H)
+
+        return torch.unflatten(res.permute(0,2,1), -1, (W, H))

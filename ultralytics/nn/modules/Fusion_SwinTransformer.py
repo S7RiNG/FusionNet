@@ -432,7 +432,7 @@ class BasicLayer(nn.Module):
         Hp = int(np.ceil(H / self.window_size)) * self.window_size
         Wp = int(np.ceil(W / self.window_size)) * self.window_size
         # 拥有和feature map一样的通道排列顺序，方便后续window_partition
-        img_mask = torch.zeros((1, Hp, Wp, 1), device=x.device)  # [1, Hp, Wp, 1]
+        img_mask = torch.zeros((1, Hp, Wp, 1), device=x.device, dtype=x.dtype)  # [1, Hp, Wp, 1]
         h_slices = (slice(0, -self.window_size),
                     slice(-self.window_size, -self.shift_size),
                     slice(-self.shift_size, None))
@@ -460,6 +460,170 @@ class BasicLayer(nn.Module):
                 x = checkpoint.checkpoint(blk, x, attn_mask)
             else:
                 x = blk(x, attn_mask)
+        if self.downsample is not None:
+            x = self.downsample(x, H, W)
+            H, W = (H + 1) // 2, (W + 1) // 2
+
+        return x, H, W
+
+
+class WindowAttention_Cross(WindowAttention):
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0, proj_drop=0):
+        super().__init__(dim, window_size, num_heads, qkv_bias, attn_drop, proj_drop)
+        self.lq = nn.Linear(dim, dim, bias=qkv_bias)
+        self.lkv = nn.Linear(dim, dim * 2, bias=qkv_bias)
+        del(self.qkv)
+
+    def forward(self, x_q, x_kv, mask: Optional[torch.Tensor] = None):
+        """
+        Args:
+            x: input features with shape of (num_windows*B, Mh*Mw, C)
+            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
+        """
+        # [batch_size*num_windows, Mh*Mw, total_embed_dim]
+        B_, N, C = x_q.shape
+        # qkv(): -> [batch_size*num_windows, Mh*Mw, 3 * total_embed_dim]
+        # reshape: -> [batch_size*num_windows, Mh*Mw, 3, num_heads, embed_dim_per_head]
+        # permute: -> [3, batch_size*num_windows, num_heads, Mh*Mw, embed_dim_per_head]
+        q = self.lq(x_q).reshape(B_, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        kv = self.lkv(x_kv).reshape(B_, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        qkv = torch.cat((q, kv), 0)
+
+        # [batch_size*num_windows, num_heads, Mh*Mw, embed_dim_per_head]
+        q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
+
+        # transpose: -> [batch_size*num_windows, num_heads, embed_dim_per_head, Mh*Mw]
+        # @: multiply -> [batch_size*num_windows, num_heads, Mh*Mw, Mh*Mw]
+        q = q * self.scale
+        attn = (q @ k.transpose(-2, -1))
+
+        # relative_position_bias_table.view: [Mh*Mw*Mh*Mw,nH] -> [Mh*Mw,Mh*Mw,nH]
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+            self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # [nH, Mh*Mw, Mh*Mw]
+        attn = attn + relative_position_bias.unsqueeze(0)
+
+        if mask is not None:
+            # mask: [nW, Mh*Mw, Mh*Mw]
+            nW = mask.shape[0]  # num_windows
+            # attn.view: [batch_size, num_windows, num_heads, Mh*Mw, Mh*Mw]
+            # mask.unsqueeze: [1, nW, 1, Mh*Mw, Mh*Mw]
+            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(-1, self.num_heads, N, N)
+            attn = self.softmax(attn)
+        else:
+            attn = self.softmax(attn)
+
+        attn = self.attn_drop(attn)
+
+        # @: multiply -> [batch_size*num_windows, num_heads, Mh*Mw, embed_dim_per_head]
+        # transpose: -> [batch_size*num_windows, Mh*Mw, num_heads, embed_dim_per_head]
+        # reshape: -> [batch_size*num_windows, Mh*Mw, total_embed_dim]
+        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+
+class SwinTransformerBlock_Cross(SwinTransformerBlock):
+    def __init__(self, dim, num_heads, window_size=7, shift_size=0, mlp_ratio=4, qkv_bias=True, drop=0, attn_drop=0, drop_path=0, act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+        super().__init__(dim, num_heads, window_size, shift_size, mlp_ratio, qkv_bias, drop, attn_drop, drop_path, act_layer, norm_layer)
+        del(self.attn)
+        self.attn = WindowAttention_Cross(
+            dim, window_size=(self.window_size, self.window_size), num_heads=num_heads, qkv_bias=qkv_bias,
+            attn_drop=attn_drop, proj_drop=drop)
+        del(self.norm1)
+        self.norm1 = norm_layer(dim * 2)
+        
+    def forward(self, x_q, x_kv, attn_mask):
+        H, W = self.H, self.W
+        B, L, C = x_q.shape
+        assert L == H * W, "input feature has wrong size"
+
+        shortcut = x_kv
+        x = torch.cat((x_q, x_kv), 2)
+        x = self.norm1(x)
+        x = x.view(B, H, W, C * 2)
+
+        # pad feature maps to multiples of window size
+        # 把feature map给pad到window size的整数倍
+        pad_l = pad_t = 0
+        pad_r = (self.window_size - W % self.window_size) % self.window_size
+        pad_b = (self.window_size - H % self.window_size) % self.window_size
+        x = F.pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
+        _, Hp, Wp, _ = x.shape
+
+        # cyclic shift
+        if self.shift_size > 0:
+            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+        else:
+            shifted_x = x
+            attn_mask = None
+
+        # partition windows
+        x_windows = window_partition(shifted_x, self.window_size)  # [nW*B, Mh, Mw, C]
+        x_windows = x_windows.view(-1, self.window_size * self.window_size, C * 2)  # [nW*B, Mh*Mw, C]
+        x_q_windows, x_kv_windows = x_windows.chunk(2, 2)
+        # W-MSA/SW-MSA
+        attn_windows = self.attn(x_q_windows, x_kv_windows, mask=attn_mask)  # [nW*B, Mh*Mw, C]
+
+        # merge windows
+        attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)  # [nW*B, Mh, Mw, C]
+        shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp)  # [B, H', W', C]
+
+        # reverse cyclic shift
+        if self.shift_size > 0:
+            x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+        else:
+            x = shifted_x
+
+        if pad_r > 0 or pad_b > 0:
+            # 把前面pad的数据移除掉
+            x = x[:, :H, :W, :].contiguous()
+
+        x = x.view(B, H * W, C)
+
+        # FFN
+        x = shortcut + self.drop_path(x)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+
+        return x
+
+
+class BasicLayer_Cross(BasicLayer):
+    def __init__(self, dim, depth, num_heads, window_size, mlp_ratio=4, qkv_bias=True, drop=0, attn_drop=0, drop_path=0, norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
+        super().__init__(dim, depth, num_heads, window_size, mlp_ratio, qkv_bias, drop, attn_drop, drop_path, norm_layer, downsample, use_checkpoint)
+        # build blocks
+        del(self.blocks)
+        self.blocks = nn.ModuleList([
+            (SwinTransformerBlock if i!=0 else SwinTransformerBlock_Cross)(
+                dim=dim,
+                num_heads=num_heads,
+                window_size=window_size,
+                shift_size=0 if (i % 2 == 0) else self.shift_size,
+                mlp_ratio=mlp_ratio,
+                qkv_bias=qkv_bias,
+                drop=drop,
+                attn_drop=attn_drop,
+                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                norm_layer=norm_layer)
+            for i in range(depth)])
+        
+    def forward(self, x_q, x_kv, H, W):
+        attn_mask = self.create_mask(x_q, H, W)  # [nW, Mh*Mw, Mh*Mw]
+        for blk in self.blocks:
+            blk.H, blk.W = H, W
+            if isinstance(blk, SwinTransformerBlock_Cross):
+                if not torch.jit.is_scripting() and self.use_checkpoint:
+                    x = checkpoint.checkpoint(blk, x_q, x_kv, attn_mask)
+                else:
+                    x = blk(x_q, x_kv, attn_mask)
+            else:
+                if not torch.jit.is_scripting() and self.use_checkpoint:
+                    x = checkpoint.checkpoint(blk, x, attn_mask)
+                else:
+                    x = blk(x, attn_mask)
+
         if self.downsample is not None:
             x = self.downsample(x, H, W)
             H, W = (H + 1) // 2, (W + 1) // 2
@@ -674,3 +838,12 @@ def swin_large_patch4_window12_384_in22k(num_classes: int = 21841, **kwargs):
                             num_classes=num_classes,
                             **kwargs)
     return model
+
+if __name__ == "__main__":
+    H = int(16)
+    W = int(32)
+    x = torch.zeros((2, H, W, 8))
+
+    blc = BasicLayer_Cross(8, 2, 2, 8)
+    q = blc(x.view(2, -1, 8), x.view(2, -1, 8), H, W)
+    print(q[0].shape)

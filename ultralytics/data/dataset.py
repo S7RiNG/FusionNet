@@ -386,12 +386,22 @@ class FusionDataset(YOLODataset):
                 if r != 1:  # if sizes are not equal
                     w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
                     im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
-                    df[0] = df[0] * (w / w0)
-                    df[1] = df[1] * (h / h0)
+                    if len(df.shape) == 3:
+                        df = cv2.resize(df, (w, h), interpolation=cv2.INTER_LINEAR)
+                        if len(df.shape) != 3:
+                            df = np.expand_dims(df, -1)
+                    else:
+                        df[0] = df[0] * (w / w0)
+                        df[1] = df[1] * (h / h0)
             elif not (h0 == w0 == self.imgsz):  # resize by stretching image to square imgsz
                 im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
-                df[0] = df[0] * (w / self.imgsz)
-                df[1] = df[1] * (h / self.imgsz)
+                if len(df.shape) == 3:
+                    df = cv2.resize(df, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
+                    if len(df.shape) != 3:
+                        df = np.expand_dims(df, -1)
+                else:
+                    df[0] = df[0] * (w / self.imgsz)
+                    df[1] = df[1] * (h / self.imgsz)
 
                         # Add to buffer if training with augmentations
             if self.augment:

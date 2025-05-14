@@ -76,7 +76,10 @@ from ultralytics.nn.modules import (
     Lidar_PositionalEncoding2D,
     Lidar_microattn,
     Lidar_HelfMaxpool,
-    Lidar_Add
+    Lidar_Add,
+    SwinBlock,
+    SwinBlock_Cross,
+    SwinEmbed
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -347,11 +350,7 @@ class DetectionModel(BaseModel):
                 """Performs a forward pass through the model, handling different Detect subclass types accordingly."""
                 if self.end2end:
                     return self.forward(x)["one2many"]
-                if isinstance(self, FusionNetModel):
-                    x = (x, torch.zeros(1, 9, s, s))
                 return self.forward(x)[0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)
-            if isinstance(self, FusionNetModel):
-                    s = 640
             m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])  # forward
             self.stride = m.stride
             m.bias_init()  # only run once
@@ -410,7 +409,51 @@ class DetectionModel(BaseModel):
 
 class FusionNetModel(DetectionModel):
     def __init__(self, cfg="yolov8n-fusion.yaml", ch=3, nc=None, verbose=True):
-        super().__init__(cfg, ch, nc, verbose)
+        super(DetectionModel, self).__init__()
+        self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict
+        if self.yaml["backbone"][0][2] == "Silence":
+            LOGGER.warning(
+                "WARNING ⚠️ YOLOv9 `Silence` module is deprecated in favor of nn.Identity. "
+                "Please delete local *.pt file and re-download the latest model checkpoint."
+            )
+            self.yaml["backbone"][0][2] = "nn.Identity"
+
+        # Define model
+        ch = self.yaml["ch"] = self.yaml.get("ch", ch)  # input channels
+        if nc and nc != self.yaml["nc"]:
+            LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
+            self.yaml["nc"] = nc  # override YAML value
+        self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
+        self.names = {i: f"{i}" for i in range(self.yaml["nc"])}  # default names dict
+        self.inplace = self.yaml.get("inplace", True)
+        self.end2end = getattr(self.model[-1], "end2end", False)
+
+        # Build strides
+        m = self.model[-1]  # Detect()
+        if isinstance(m, Detect):  # includes all Detect subclasses like Segment, Pose, OBB, WorldDetect
+            s = 256  # 2x min stride
+            m.inplace = self.inplace
+
+            def _forward(x):
+                """Performs a forward pass through the model, handling different Detect subclass types accordingly."""
+                if self.end2end:
+                    return self.forward(x)["one2many"]
+                if isinstance(self, FusionNetModel):
+                    x = (x, torch.zeros(1, 10, s, s))
+                return self.forward(x)[0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)
+            if isinstance(self, FusionNetModel):
+                    s = 640
+            m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])  # forward
+            self.stride = m.stride
+            m.bias_init()  # only run once
+        else:
+            self.stride = torch.Tensor([32])  # default stride for i.e. RTDETR
+
+        # Init weights, biases
+        initialize_weights(self)
+        if verbose:
+            self.info()
+            LOGGER.info("")
 
     def loss(self, batch, preds=None):
         """
@@ -1170,16 +1213,24 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             else:
                 c1 = d.get("fusiondim").get(f)
             c2 = c1 * 8
-        elif m is Lidar_microattn:
+        elif m in {Lidar_microattn, Lidar_PositionalEncoding2D}:
             c1 = ch[f[0]]
             args = [c1]
             c2 = c1
         elif m in {Lidar_HelfMaxpool, Lidar_Add}:
             c2 = ch[f[0]]
             args = []
-        elif m is Lidar_PositionalEncoding2D:
-            c2 = ch[f]
-            args = [c2]
+        elif m in {SwinBlock, SwinBlock_Cross}:
+            chf = ch[f] if isinstance(f, int) else ch[f[0]]
+            c2 = (2 * chf) if args[0] == True else chf
+            args = [chf, args[0]]
+        elif m is SwinEmbed:
+            if isinstance(f, int):
+                c1 = ch[f]
+            else:
+                c1 = d.get("fusiondim").get(f)
+            c2 = args[0]
+            args = [c1, args[0], args[1]]
         else:
             c2 = ch[f]
 
