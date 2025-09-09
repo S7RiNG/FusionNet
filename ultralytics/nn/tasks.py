@@ -439,7 +439,7 @@ class FusionNetModel(DetectionModel):
                 if self.end2end:
                     return self.forward(x)["one2many"]
                 if isinstance(self, FusionNetModel):
-                    x = (x, torch.zeros(1, 10, s, s))
+                    x = (x, torch.zeros(1, 5, s, s))
                 return self.forward(x)[0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)
             if isinstance(self, FusionNetModel):
                     s = 640

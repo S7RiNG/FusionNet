@@ -27,6 +27,7 @@ def read_combo(img_path) -> Tensor:
     path = Path(img_path)
     path_map = path.parent/'..'/'maps'/path.name
     path_map9ch = Path.with_suffix((path.parent/'..'/'map9ch'/path.name), '.npy') 
+    path_map4ch = Path.with_suffix((path.parent/'..'/'map4ch'/path.name), '.npy') 
     path_depth = path.parent/'..'/'depths'/path.name
     path_point = Path.with_suffix((path.parent/'..'/'points'/path.name), '.npy') 
 
@@ -36,8 +37,10 @@ def read_combo(img_path) -> Tensor:
         df = np.load(path_point)
     elif False:
         df = read_lidarmap(path_map)
-    elif True: #path_map9ch
+    elif False: #path_map9ch
         df = np.load(path_map9ch)
+    elif True: #path_map4ch
+        df = np.load(path_map4ch)
     else:
         df = read_lidarmap(path_depth)
     return im, df
@@ -188,26 +191,26 @@ class LetterBox_LiDAR(LetterBox):
         )  # add border to rgb
 
         if len(df.shape) == 3:
-            df = np.pad(df, pad_width=((top, bottom), (left, right), (0,0)), mode="constant", constant_values=114)
+            # df = np.pad(df, pad_width=((top, bottom), (left, right), (0,0)), mode="constant", constant_values=114)
             # df = cv2.copyMakeBorder(
             #     df, top, bottom, left, right, cv2.BORDER_CONSTANT, value=114
             # )  # add border to lidar
 
-            # dim = df.shape[-1]
-            # buf = []
-            # for slic_dim in range(0, dim, 3):
-            #     slic_dim_end = min(slic_dim+3, dim)
-            #     slic = df[:,:,slic_dim:slic_dim_end]
+            dim = df.shape[-1]
+            buf = []
+            for slic_dim in range(0, dim, 3):
+                slic_dim_end = min(slic_dim+3, dim)
+                slic = df[:,:,slic_dim:slic_dim_end]
 
-            #     ndim = slic_dim_end - slic_dim_end
-            #     value = (114, 114, 114) if ndim==3 else (114, 114) if ndim==2 else 114
-            #     slic = cv2.copyMakeBorder(
-            #         slic, top, bottom, left, right, cv2.BORDER_CONSTANT, value=value
-            #     )  # add border to lidar
-            #     if len(slic.shape) != 3:
-            #         slic = np.expand_dims(slic, -1)
-            #     buf.append(slic)
-            # df = np.concatenate(buf, -1)
+                ndim = slic_dim_end - slic_dim_end
+                value = [114,] * ndim
+                slic = cv2.copyMakeBorder(
+                    slic, top, bottom, left, right, cv2.BORDER_CONSTANT, value=value
+                )  # add border to lidar
+                if len(slic.shape) != 3:
+                    slic = np.expand_dims(slic, -1)
+                buf.append(slic)
+            df = np.concatenate(buf, -1)
            
             if len(df.shape) != 3:
                 df = np.expand_dims(df, -1)

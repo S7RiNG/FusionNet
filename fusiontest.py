@@ -11,7 +11,7 @@ import numpy as np
 if __name__ == "__main__":
     
     if sys.platform == 'win32':
-        data = r'E:\Dataset\kitti\yolo_fusion\data.yaml'
+        data = r'F:\Dataset\kitti\yolo_fusion\data.yaml'
         device = 'cuda'
         modelyaml = r'E:\Work\stu\FusionNet\ultralytics\cfg\models\fusion\yolov8m-fusion_22_Swin1_ex.yaml'
     elif sys.platform == 'darwin':
@@ -31,10 +31,10 @@ if __name__ == "__main__":
     
     # Train
     # model = FusionNet('ultralytics/cfg/models/fusion/yolov8m-fusion.yaml', verbose=True)
-    # model = YOLO('ultralytics/cfg/models/v8/yolov8m.yaml', verbose=True)
-    model = FusionNet(modelyaml, verbose=True)
+    model = YOLO('ultralytics/cfg/models/v5/yolov5m.yaml', verbose=True)
+    # model = FusionNet(modelyaml, verbose=True)
 
-    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=2)
+    res = model.train(data=data, device=device, epochs=epochs, batch=batch, cache='disk', workers=4)
 
     # # Resume mig
     # model = FusionNet(r'E:\Work\stu\FusionNet\runs\detect\train19\weights\last.pt')
